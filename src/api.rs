@@ -1128,3 +1128,20 @@ mod tests {
         assert_eq!(request.messages.as_ref().unwrap().len(), 1);
     }
 }
+
+#[cfg(feature = "vision")]
+pub async fn vision(
+    State(_state): State<Arc<AppState>>,
+    Json(req): Json<crate::vision::VisionRequest>,
+) -> impl IntoResponse {
+    // Use default vision model or specified one
+    let model_name = req.model.as_deref().unwrap_or("minicpm-v").to_string();
+
+    match crate::vision::process_vision_request(req, &model_name).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => {
+            tracing::error!("Vision processing error: {}", e);
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}

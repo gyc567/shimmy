@@ -22,6 +22,8 @@ pub mod safetensors_adapter;
 pub mod server;
 pub mod templates;
 pub mod tools;
+#[cfg(feature = "vision")]
+pub mod vision;
 pub mod util {
     pub mod diag;
     pub mod memory;

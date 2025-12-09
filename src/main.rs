@@ -16,12 +16,16 @@ mod openai_compat;
 mod port_manager;
 mod server;
 mod templates;
+#[cfg(feature = "vision")]
+mod vision;
 mod util {
     pub mod diag;
     pub mod memory;
 }
 
 use clap::Parser;
+#[cfg(feature = "vision")]
+use base64::{Engine as _, engine::general_purpose};
 use model_registry::{ModelEntry, Registry};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -608,6 +612,44 @@ async fn main() -> anyhow::Result<()> {
                 Ok(message) => println!("{}", message),
                 Err(e) => {
                     eprintln!("❌ Template generation failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        #[cfg(feature = "vision")]
+        cli::Command::Vision { image, url, mode, output, model, timeout, license, raw } => {
+            // Build vision request
+            let request = crate::vision::VisionRequest {
+                image_base64: image.map(|path| {
+                    // Read image file and encode as base64
+                    match std::fs::read(&path) {
+                        Ok(data) => general_purpose::STANDARD.encode(&data),
+                        Err(e) => {
+                            eprintln!("❌ Failed to read image file '{}': {}", path, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }),
+                url,
+                mode: mode.clone(),
+                model,
+                timeout_ms: Some(timeout as u64),
+                raw: Some(raw),
+            };
+
+            let model_name = request.model.as_ref().map(|s| s.as_str()).unwrap_or("minicpm-v").to_string();
+
+            // Process vision request (async)
+            match crate::vision::process_vision_request(request, &model_name).await {
+                Ok(response) => {
+                    if output == "json" {
+                        println!("{}", serde_json::to_string_pretty(&response).unwrap());
+                    } else {
+                        println!("Vision analysis complete. Use --output json for full results.");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("❌ Vision processing failed: {}", e);
                     std::process::exit(1);
                 }
             }

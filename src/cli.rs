@@ -87,6 +87,34 @@ pub enum Command {
         #[arg(short, long)]
         name: Option<String>,
     },
+    #[cfg(feature = "vision")]
+    /// Analyze image or web page with AI vision
+    Vision {
+        /// Path to image file
+        #[arg(long)]
+        image: Option<String>,
+        /// URL for web page analysis
+        #[arg(long)]
+        url: Option<String>,
+        /// Analysis mode: full, ocr, layout, brief, web
+        #[arg(long, default_value = "full")]
+        mode: String,
+        /// Output format: json, pretty
+        #[arg(long, default_value = "json")]
+        output: String,
+        /// Model name or path
+        #[arg(long)]
+        model: Option<String>,
+        /// Timeout in milliseconds
+        #[arg(long, default_value_t = 180000)]
+        timeout: u64,
+        /// License key
+        #[arg(long)]
+        license: Option<String>,
+        /// Include raw model output on parse failure
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 #[cfg(test)]
