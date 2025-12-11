@@ -48,6 +48,21 @@ docs-internal/
 *.db
 *.db-*
 
+# Test screenshots (large binary files)
+test-screenshots/
+
+# Local vendor/build dirs (not part of shimmy repo)
+llama-cpp-minicpm/
+target-gpu/
+
+# Local logs and scratch files
+output.md
+test_image.b64
+*.b64
+00-diagnostic-startup.png
+docs/shimmy-workspace.code-workspace
+docs/internal/SHIMMY_VISION_PRICING_STRATEGY.md
+
 # Package manager artifacts
 node_modules/
 dist/

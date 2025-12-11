@@ -18,14 +18,16 @@ mod server;
 mod templates;
 #[cfg(feature = "vision")]
 mod vision;
+#[cfg(feature = "vision")]
+mod vision_license;
 mod util {
     pub mod diag;
     pub mod memory;
 }
 
-use clap::Parser;
 #[cfg(feature = "vision")]
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
+use clap::Parser;
 use model_registry::{ModelEntry, Registry};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,16 +38,38 @@ pub struct AppState {
     pub registry: Registry,
     pub observability: observability::ObservabilityManager,
     pub response_cache: cache::ResponseCache,
+    #[cfg(feature = "vision")]
+    #[cfg(feature = "vision")]
+    pub vision_license_manager: Option<crate::vision_license::VisionLicenseManager>,
 }
 
 impl AppState {
     pub fn new(engine: Box<dyn engine::InferenceEngine>, registry: Registry) -> Self {
-        Self {
+        let mut state = Self {
             engine,
             registry,
             observability: observability::ObservabilityManager::new(),
             response_cache: cache::ResponseCache::new(),
+            #[cfg(feature = "vision")]
+            #[cfg(feature = "vision")]
+            vision_license_manager: None,
+        };
+
+        #[cfg(feature = "vision")]
+        {
+            state.vision_license_manager = Some(crate::vision_license::VisionLicenseManager::new());
+            // Load license cache asynchronously
+            if let Some(manager) = &state.vision_license_manager {
+                let manager = manager.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = manager.load_cache().await {
+                        tracing::warn!("Failed to load vision license cache: {}", e);
+                    }
+                });
+            }
         }
+
+        state
     }
 }
 
@@ -321,6 +345,8 @@ async fn main() -> anyhow::Result<()> {
                 println!("   • POST /api/generate (streaming + non-streaming)");
                 println!("   • GET  /health (health check + metrics)");
                 println!("   • GET  /v1/models (OpenAI-compatible)");
+                #[cfg(feature = "vision")]
+                println!("   • POST /api/vision (image/web analysis)");
 
                 info!(%addr, models=%available_models.len(), "shimmy serving with {} available models", available_models.len());
                 return server::run(addr, enhanced_state).await;
@@ -342,6 +368,8 @@ async fn main() -> anyhow::Result<()> {
             println!("   • POST /api/generate (streaming + non-streaming)");
             println!("   • GET  /health (health check + metrics)");
             println!("   • GET  /v1/models (OpenAI-compatible)");
+            #[cfg(feature = "vision")]
+            println!("   • POST /api/vision (image/web analysis)");
 
             info!(%addr, models=%available_models.len(), "shimmy serving with {} available models", available_models.len());
             server::run(addr, state).await?;
@@ -617,7 +645,16 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         #[cfg(feature = "vision")]
-        cli::Command::Vision { image, url, mode, output, model, timeout, license, raw } => {
+        cli::Command::Vision {
+            image,
+            url,
+            mode,
+            output,
+            model,
+            timeout,
+            license,
+            raw,
+        } => {
             // Build vision request
             let request = crate::vision::VisionRequest {
                 image_base64: image.map(|path| {
@@ -633,14 +670,32 @@ async fn main() -> anyhow::Result<()> {
                 url,
                 mode: mode.clone(),
                 model,
-                timeout_ms: Some(timeout as u64),
+                timeout_ms: Some(timeout),
                 raw: Some(raw),
+                license,
             };
 
-            let model_name = request.model.as_ref().map(|s| s.as_str()).unwrap_or("minicpm-v").to_string();
+            let env_model = std::env::var("SHIMMY_VISION_MODEL").ok();
+            let model_name = request
+                .model
+                .as_deref()
+                .or_else(|| env_model.as_deref())
+                .unwrap_or("registry.ollama.ai/library/minicpm-v/latest")
+                .to_string();
 
             // Process vision request (async)
-            match crate::vision::process_vision_request(request, &model_name).await {
+            let license_manager = crate::vision_license::VisionLicenseManager::new();
+            // Load cache
+            let _ = license_manager.load_cache().await;
+
+            match crate::vision::process_vision_request(
+                request,
+                &model_name,
+                &license_manager,
+                &state,
+            )
+            .await
+            {
                 Ok(response) => {
                     if output == "json" {
                         println!("{}", serde_json::to_string_pretty(&response).unwrap());

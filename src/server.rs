@@ -157,9 +157,7 @@ pub async fn run(addr: SocketAddr, state: Arc<AppState>) -> anyhow::Result<()> {
         app = app.route("/api/vision", post(api::vision));
     }
 
-    let app = app
-        .layer(middleware::from_fn(cors_layer))
-        .with_state(state);
+    let app = app.layer(middleware::from_fn(cors_layer)).with_state(state);
     axum::serve(listener, app).await?;
     Ok(())
 }

@@ -1131,15 +1131,43 @@ mod tests {
 
 #[cfg(feature = "vision")]
 pub async fn vision(
-    State(_state): State<Arc<AppState>>,
-    Json(req): Json<crate::vision::VisionRequest>,
+    State(state): State<Arc<AppState>>,
+    Json(mut req): Json<crate::vision::VisionRequest>,
 ) -> impl IntoResponse {
-    // Use default vision model or specified one
-    let model_name = req.model.as_deref().unwrap_or("minicpm-v").to_string();
+    // Extract license from environment or request
+    if req.license.is_none() {
+        req.license = std::env::var("SHIMMY_LICENSE_KEY").ok();
+    }
 
-    match crate::vision::process_vision_request(req, &model_name).await {
+    // Use default vision model or specified one
+    let env_model = std::env::var("SHIMMY_VISION_MODEL").ok();
+    let model_name = req
+        .model
+        .as_deref()
+        .or_else(|| env_model.as_deref())
+        .unwrap_or("registry.ollama.ai/library/minicpm-v/latest")
+        .to_string();
+
+    match crate::vision::process_vision_request(
+        req,
+        &model_name,
+        state.vision_license_manager.as_ref().unwrap(),
+        &*state,
+    )
+    .await
+    {
         Ok(response) => Json(response).into_response(),
         Err(e) => {
+            // Check if it's a license error
+            if let Some(license_err) = e.downcast_ref::<crate::vision_license::VisionLicenseError>()
+            {
+                return (
+                    license_err.to_status_code(),
+                    Json(license_err.to_json_error()),
+                )
+                    .into_response();
+            }
+
             tracing::error!("Vision processing error: {}", e);
             axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }

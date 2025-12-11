@@ -315,6 +315,58 @@ shimmy probe model-name         # Verify model loads
 shimmy gpu-info                 # Show GPU backend status
 ```
 
+## 👁️ Vision Analysis (Keygen-Licensed)
+
+Shimmy Vision provides AI-powered image and web page analysis with OCR, layout detection, and visual understanding. **MiniCPM-V is the default vision model** - it will be automatically downloaded on first use.
+
+### Installation
+```bash
+# Install with vision support
+cargo install shimmy --features llama,vision
+```
+
+### Environment Variables
+Set these for Keygen licensing:
+```bash
+export KEYGEN_ACCOUNT_ID="your-account-id"
+export KEYGEN_API_KEY="your-api-key"
+```
+
+### Usage
+```bash
+# Analyze local image (uses minicpm-v by default)
+shimmy vision --image path/to/image.png --license your-license-key
+
+# Use a different vision model
+shimmy vision --image path/to/image.png --model llava:latest --license your-license-key
+
+# Analyze web page
+shimmy vision --url https://example.com --mode full --license your-license-key
+
+# HTTP API
+curl -X POST http://localhost:11435/api/vision \
+  -H "Content-Type: application/json" \
+  -d '{"image_base64": "base64-encoded-image", "mode": "full", "license_key": "your-key"}'
+```
+
+### Vision Models
+Shimmy supports multiple vision models via Ollama:
+
+- **minicpm-v:latest** (default) - Recommended for general use
+- llava:latest - Alternative LLaVA model
+- llava-phi3:latest - Phi-3 based vision model
+- moondream:latest - Lightweight vision model
+- llama3.2-vision:latest - Meta's Llama 3.2 vision model
+
+Models are automatically downloaded on first use. Use `--model` flag or `SHIMMY_VISION_MODEL` environment variable to specify a different model.
+
+### Analysis Modes
+- `full`: Complete analysis (OCR + layout + visual)
+- `ocr`: Text extraction only
+- `layout`: Structure and positioning
+- `brief`: Summary analysis
+- `web`: Web page analysis
+
 ## Technical Architecture
 
 - **Rust + Tokio**: Memory-safe, async performance
@@ -325,6 +377,7 @@ shimmy gpu-info                 # Show GPU backend status
 
 ### 🚀 Advanced Features
 
+- **👁️ Vision Analysis**: Image and web page analysis with OCR, layout detection, and visual understanding (Keygen-licensed)
 - **🧠 MOE CPU Offloading**: Hybrid GPU/CPU processing for large models (70B+)
 - **🎯 Smart Model Filtering**: Automatically excludes non-language models (Stable Diffusion, Whisper, CLIP)
 - **🛡️ 6-Gate Release Validation**: Constitutional quality limits ensure reliability
