@@ -200,30 +200,57 @@ Simulate actual AI use cases end-to-end.
 
 ## Test Execution Approach
 
+### ⚠️ CRITICAL: JSON Construction Rules
+
+**NEVER use heredocs with command substitution for JSON with base64 data.**
+
+```bash
+# ❌ WRONG - heredoc with quotes prevents substitution
+cat > file.json << 'EOF'
+{"image_base64": "$(cat file.b64)"}
+EOF
+# Result: literal string "$(cat file.b64)" in JSON - HANGS FOR 25+ MINUTES
+
+# ❌ WRONG - heredoc without quotes has escaping issues with base64
+cat > file.json << EOF
+{"image_base64": "$(cat file.b64)"}
+EOF
+# Result: base64 may contain characters that break JSON
+
+# ✅ CORRECT - use jq with --rawfile
+jq -n --rawfile img file.b64 '{"image_base64": $img, "mode": "ocr"}' > file.json
+
+# ✅ CORRECT - use jq with --arg for small strings
+jq -n --arg img "$(cat file.b64)" '{"image_base64": $img}' > file.json
+```
+
 ### CLI Execution Pattern
 ```bash
 # Set license once
 export KEYGEN_PRODUCT_TOKEN="<token>"
 export VISION_LICENSE="1CF681-F65AC1-34018A-CA470A-1B107D-V3"
 
-# Run tests
+# Run tests (CLI loads model each time - slow but simple)
 shimmy vision --image <path> --mode <mode> --license "$VISION_LICENSE" --output json
 ```
 
-### HTTP API Execution Pattern
+### HTTP API Execution Pattern (Preferred - model stays loaded)
 ```bash
-# Image analysis
+# Step 1: Create base64 file
+base64 -w0 image.png > /tmp/image.b64
+
+# Step 2: Build JSON with jq (SAFE - handles all escaping)
+jq -n --rawfile img /tmp/image.b64 \
+  --arg mode "ocr" \
+  --arg license "$VISION_LICENSE" \
+  '{image_base64: $img, mode: $mode, license: $license}' > /tmp/req.json
+
+# Step 3: Send request
 curl -s -X POST http://127.0.0.1:11436/api/vision \
   -H "Content-Type: application/json" \
-  -d @- <<EOF
-{
-  "image_base64": "$(base64 -w0 image.png)",
-  "mode": "ocr",
-  "license": "$VISION_LICENSE"
-}
-EOF
+  -d @/tmp/req.json | jq .
 
-# URL analysis
+# URL analysis (no base64, simpler)
 curl -s -X POST http://127.0.0.1:11436/api/vision \
   -H "Content-Type: application/json" \
   -d '{

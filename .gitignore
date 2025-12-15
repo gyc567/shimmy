@@ -36,6 +36,14 @@ Thumbs.db
 # Internal development documents (NEVER commit)
 docs-internal/
 
+# Cloudflare Worker local state / secrets
+cloudflare-worker/.wrangler/
+.dev.vars
+cloudflare-worker/.dev.vars
+
+# Internal licensing notes (contains secrets)
+memory/VISION_STRIPE_KEYGEN_ARCHITECTURE.md
+
 # Copilot instructions (internal only)
 .github/copilot-instructions.md
 

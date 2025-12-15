@@ -88,7 +88,7 @@ pub enum Command {
         name: Option<String>,
     },
     #[cfg(feature = "vision")]
-    /// Analyze image or web page with AI vision
+    /// Analyze image or web page with AI vision (requires MiniCPM-V model)
     Vision {
         /// Path to image file
         #[arg(long)]
@@ -102,9 +102,6 @@ pub enum Command {
         /// Output format: json, pretty
         #[arg(long, default_value = "json")]
         output: String,
-        /// Model name or path
-        #[arg(long)]
-        model: Option<String>,
         /// Timeout in milliseconds
         #[arg(long, default_value_t = 180000)]
         timeout: u64,

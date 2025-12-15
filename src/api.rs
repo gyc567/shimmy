@@ -1146,7 +1146,7 @@ pub async fn vision(
         .model
         .as_deref()
         .or(env_model.as_deref())
-        .unwrap_or("registry.ollama.ai/library/minicpm-v/latest")
+        .unwrap_or("minicpm-v")
         .to_string();
 
     let Some(license_manager) = state.vision_license_manager.as_ref() else {
@@ -1218,10 +1218,9 @@ pub async fn vision(
             let status = map_vision_error_status(&full_message);
 
             tracing::error!(status = %status, "Vision processing error: {}", full_message);
-            
-            // Expose client error messages (4xx) to help users fix their requests
-            // Hide server error details (5xx) for security
-            let message = if status.is_client_error() {
+            // Expose client error messages (4xx) to help users fix their requests.
+            // Hide server error details (5xx) unless running in dev mode.
+            let message = if status.is_client_error() || std::env::var("SHIMMY_VISION_DEV_MODE").is_ok() {
                 full_message
             } else {
                 "Vision processing error".to_string()

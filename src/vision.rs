@@ -10,6 +10,8 @@ use image::{codecs::png::PngEncoder, ColorType, ImageEncoder};
 #[cfg(feature = "vision")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "vision")]
+use sha2::{Digest, Sha256};
+#[cfg(feature = "vision")]
 use std::time::Instant;
 #[cfg(feature = "vision")]
 use tracing::info;
@@ -219,13 +221,17 @@ pub async fn process_vision_request(
 
     let trace = std::env::var("SHIMMY_VISION_TRACE").is_ok();
 
-    // Check license
-    license_manager
-        .check_vision_access(req.license.as_deref())
-        .await?;
+    // Check license first (bypass in dev mode)
+    if std::env::var("SHIMMY_VISION_DEV_MODE").is_err() {
+        license_manager
+            .check_vision_access(req.license.as_deref())
+            .await?;
+    }
 
-    // Record usage
-    license_manager.record_usage().await?;
+    // Record usage (skip in dev mode)
+    if std::env::var("SHIMMY_VISION_DEV_MODE").is_err() {
+        license_manager.record_usage().await?;
+    }
 
     // Load image data
     let (raw_image_data, captured_dom) = if let Some(base64) = &req.image_base64 {
@@ -291,39 +297,42 @@ pub async fn process_vision_request(
         );
     }
 
-    // Determine model to use (use provided model_name, fallback to env var, then default)
+    // Determine model to use (use provided model_name)
     let vision_model = model_name.to_string();
+    let vision_model_id = normalize_vision_model_id(&vision_model);
 
-    // Normalize model name for registry lookup (replace : with / in registry paths)
-    let registry_model_name = vision_model.replace(':', "/");
+    // Shimmy-native vision bootstrap: no Ollama dependency.
+    let (model_spec, resolved_model_name) = if is_builtin_minicpm_v(&vision_model_id) {
+        let auto_download = std::env::var("SHIMMY_VISION_AUTO_DOWNLOAD")
+            .ok()
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(true);
 
-    // Check if model exists in Ollama and prompt download if needed
-    if !check_ollama_model_exists(&vision_model) {
-        return Err(format!(
-            "Vision model '{}' is not available in Ollama.\n\
-            \nTo download the default MiniCPM-V model, run:\n\
-            \tollama pull registry.ollama.ai/library/minicpm-v:latest\n\
-            \nOr specify a different model with --model flag or SHIMMY_VISION_MODEL environment variable.\n\
-            \nAvailable vision models you can try:\n\
-            \t• minicpm-v:latest (recommended default)\n\
-            \t• llava:latest\n\
-            \t• llava-phi3:latest\n\
-            \t• moondream:latest\n\
-            \t• llama3.2-vision:latest",
-            vision_model
-        ).into());
-    }
+        let (model_path, _projector_path) = ensure_minicpm_v_files(auto_download).await?;
 
-    // Load vision model using the normalized name for registry lookup
-    let model_spec = state
-        .registry
-        .to_spec(&registry_model_name)
-        .ok_or_else(|| {
-            format!(
-                "Vision model '{}' not found in registry. This may be a configuration issue.",
-                registry_model_name
-            )
-        })?;
+        (
+            crate::engine::ModelSpec {
+                name: "minicpm-v".to_string(),
+                base_path: model_path,
+                lora_path: None,
+                template: Some("chatml".to_string()),
+                ctx_len: 32768,
+                n_threads: None,
+            },
+            "minicpm-v".to_string(),
+        )
+    } else {
+        let spec = state
+            .registry
+            .to_spec(&vision_model_id)
+            .ok_or_else(|| {
+                format!(
+                    "Vision model '{}' not found.\n\nTo use the built-in MiniCPM-V download, set SHIMMY_VISION_MODEL=minicpm-v.",
+                    vision_model_id
+                )
+            })?;
+        (spec, vision_model_id.clone())
+    };
 
     let loaded_model = state
         .engine
@@ -335,7 +344,7 @@ pub async fn process_vision_request(
         info!(
             target: "vision",
             stage = "model_load",
-            model = %registry_model_name,
+            model = %resolved_model_name,
             "vision model loaded"
         );
     }
@@ -404,7 +413,7 @@ pub async fn process_vision_request(
     let response = parse_vision_output(
         &raw_output,
         &req,
-        model_name,
+        resolved_model_name.as_str(),
         start_time.elapsed().as_millis() as u64,
         captured_dom,
     )?;
@@ -750,7 +759,7 @@ mod tests {
             "full",
             640,
             480,
-            "registry.ollama.ai/library/minicpm-v/latest",
+            "minicpm-v",
         );
         assert!(p.contains("valid JSON"));
         assert!(!p.contains("```"));
@@ -1115,36 +1124,158 @@ pub fn parse_structured_output(
     })
 }
 
-/// Check if a model exists in Ollama
 #[cfg(feature = "vision")]
-fn check_ollama_model_exists(model_name: &str) -> bool {
-    // Extract the actual model name (remove registry prefix if present)
-    let actual_model_name =
-        if let Some(stripped) = model_name.strip_prefix("registry.ollama.ai/library/") {
-            stripped.replace('/', ":")
-        } else {
-            model_name.to_string()
-        };
+fn normalize_vision_model_id(input: &str) -> String {
+    let s = input.trim();
 
-    // Run ollama list and check if our model is in the output
-    match std::process::Command::new("ollama")
-        .args(["list"])
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // Look for the model name in the output (case-insensitive)
-            stdout
-                .lines()
-                .skip(1) // Skip header line
-                .any(|line| {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    parts
-                        .first()
-                        .map(|name| name.to_lowercase() == actual_model_name.to_lowercase())
-                        .unwrap_or(false)
-                })
-        }
-        _ => false,
+    // Back-compat: older default used an Ollama registry URL-like string.
+    if let Some(stripped) = s.strip_prefix("registry.ollama.ai/library/") {
+        let candidate = stripped
+            .trim_end_matches("/latest")
+            .trim_end_matches(":latest")
+            .trim_matches('/');
+        return candidate.to_string();
     }
+
+    // Also accept minicpm-v:latest and normalize to minicpm-v.
+    s.trim_end_matches(":latest").to_string()
+}
+
+#[cfg(feature = "vision")]
+fn is_builtin_minicpm_v(model_id: &str) -> bool {
+    let lower = model_id.to_lowercase();
+    lower == "minicpm-v" || lower == "minicpm" || lower.contains("minicpm")
+}
+
+#[cfg(feature = "vision")]
+fn vision_model_dir() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("SHIMMY_VISION_MODEL_DIR") {
+        if !dir.trim().is_empty() {
+            return std::path::PathBuf::from(dir);
+        }
+    }
+
+    let base = dirs::data_local_dir()
+        .or_else(dirs::cache_dir)
+        .or_else(dirs::data_dir)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    base.join("shimmy").join("vision").join("models")
+}
+
+#[cfg(feature = "vision")]
+async fn ensure_minicpm_v_files(
+    auto_download: bool,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), Box<dyn std::error::Error>> {
+    const MODEL_URL: &str = "https://huggingface.co/openbmb/MiniCPM-V-2_6-gguf/resolve/main/ggml-model-Q4_K_M.gguf";
+    const MODEL_SHA256_HEX: &str =
+        "3a4078d53b46f22989adbf998ce5a3fd090b6541f112d7e936eb4204a04100b1";
+    const PROJ_URL: &str = "https://huggingface.co/openbmb/MiniCPM-V-2_6-gguf/resolve/main/mmproj-model-f16.gguf";
+    const PROJ_SHA256_HEX: &str =
+        "4485f68a0f1aa404c391e788ea88ea653c100d8e98fe572698f701e5809711fd";
+
+    let dir = vision_model_dir().join("minicpm-v-2_6");
+    tokio::fs::create_dir_all(&dir).await?;
+
+    let model_path = dir.join("ggml-model-Q4_K_M.gguf");
+    let proj_path = dir.join("mmproj-model-f16.gguf");
+
+    if !auto_download && (!model_path.exists() || !proj_path.exists()) {
+        return Err(format!(
+            "MiniCPM-V model files are missing.\n\nExpected:\n  - {}\n  - {}\n\nSet SHIMMY_VISION_AUTO_DOWNLOAD=1 to let Shimmy download them automatically.",
+            model_path.display(),
+            proj_path.display()
+        )
+        .into());
+    }
+
+    ensure_download_and_verify(&model_path, MODEL_URL, MODEL_SHA256_HEX).await?;
+    ensure_download_and_verify(&proj_path, PROJ_URL, PROJ_SHA256_HEX).await?;
+
+    Ok((model_path, proj_path))
+}
+
+#[cfg(feature = "vision")]
+async fn ensure_download_and_verify(
+    dest: &std::path::Path,
+    url: &str,
+    expected_sha256_hex: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if dest.exists() {
+        if verify_file_sha256(dest, expected_sha256_hex).await.is_ok() {
+            return Ok(());
+        }
+
+        // Corrupt or wrong file: remove and re-download.
+        let _ = tokio::fs::remove_file(dest).await;
+    }
+
+    let tmp = dest.with_extension("partial");
+    if tmp.exists() {
+        let _ = tokio::fs::remove_file(&tmp).await;
+    }
+
+    let client = reqwest::Client::new();
+    let mut resp = client.get(url).send().await?;
+    if !resp.status().is_success() {
+        return Err(format!("Failed to download {} (HTTP {})", url, resp.status()).into());
+    }
+
+    let mut file = tokio::fs::File::create(&tmp).await?;
+    let mut hasher = Sha256::new();
+
+    use tokio::io::AsyncWriteExt;
+    while let Some(chunk) = resp.chunk().await? {
+        hasher.update(&chunk);
+        file.write_all(&chunk).await?;
+    }
+    file.flush().await?;
+
+    let expected_lower = expected_sha256_hex.to_lowercase();
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != expected_lower {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(format!(
+            "SHA256 mismatch for {}. Expected {}, got {}",
+            dest.display(),
+            expected_sha256_hex,
+            actual
+        )
+        .into());
+    }
+
+    tokio::fs::rename(&tmp, dest).await?;
+    Ok(())
+}
+
+#[cfg(feature = "vision")]
+async fn verify_file_sha256(
+    path: &std::path::Path,
+    expected_sha256_hex: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut file = tokio::fs::File::open(path).await?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 8 * 1024 * 1024];
+
+    use tokio::io::AsyncReadExt;
+    loop {
+        let n = file.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+
+    let expected_lower = expected_sha256_hex.to_lowercase();
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != expected_lower {
+        return Err(format!(
+            "SHA256 mismatch for {}. Expected {}, got {}",
+            path.display(),
+            expected_sha256_hex,
+            actual
+        )
+        .into());
+    }
+
+    Ok(())
 }

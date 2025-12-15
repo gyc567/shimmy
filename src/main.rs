@@ -650,13 +650,13 @@ async fn main() -> anyhow::Result<()> {
             url,
             mode,
             output,
-            model,
             timeout,
             license,
             raw,
             screenshot,
             viewport_width,
             viewport_height,
+            ..
         } => {
             // Build vision request
             let request = crate::vision::VisionRequest {
@@ -672,7 +672,7 @@ async fn main() -> anyhow::Result<()> {
                 }),
                 url,
                 mode: mode.clone(),
-                model,
+                model: None,
                 timeout_ms: Some(timeout),
                 raw: Some(raw),
                 license,
@@ -686,7 +686,7 @@ async fn main() -> anyhow::Result<()> {
                 .model
                 .as_deref()
                 .or(env_model.as_deref())
-                .unwrap_or("registry.ollama.ai/library/minicpm-v/latest")
+                .unwrap_or("minicpm-v")
                 .to_string();
 
             // Process vision request (async)

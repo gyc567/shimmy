@@ -2,7 +2,7 @@
 
 ## Run 1: CPU-only (no GPU offload)
 - Command: `SHIMMY_VISION_DEV_MODE=1 cargo run --features llama,vision --bin shimmy -- serve --bind 127.0.0.1:11435`
-- Model: `registry.ollama.ai/library/minicpm-v:latest` (MiniCPM-V via Ollama blobs)
+- Model: `minicpm-v` (MiniCPM-V via Shimmy cache)
 - Mode: `full`
 - Requests sent to: `http://127.0.0.1:11435/api/vision`
 - Notes: server started once; four images posted sequentially; times include model warm state; `request_seconds` ≈ `meta.duration_ms/1000` from the response.
@@ -43,7 +43,7 @@
 ## Run 3: GPU (CUDA) via VS Code task (server already running)
 - Server: started once via VS Code task `serve-vision-gpu` (bind `127.0.0.1:11436`)
 - Requests sent sequentially (one per image)
-- Model: `registry.ollama.ai/library/minicpm-v/latest`
+- Model: `minicpm-v`
 
 | image | request_seconds | model_duration_ms | parse_warnings |
 | --- | ---: | ---: | --- |
@@ -55,3 +55,43 @@
 ## Next steps
 - Repeat the same test after rebuilding with GPU features (e.g., `cargo build --features llama,vision,llama-cuda`) and rerun the server, then append results here for comparison.
 - Consider lowering vision `max_tokens` for faster responses if quality remains acceptable.
+
+---
+
+## Run 4: Cold Start vs Hot Server Comparison (2024-12-14)
+
+**Purpose:** Measure the overhead of CLI cold start (model loading) vs hot server.
+
+- **Test Image:** `theme-tester/screenshots/02-after-fix.png` (57KB)
+- **Mode:** `brief`
+- **GPU:** CUDA enabled (RTX 3060 12GB)
+- **Model:** `minicpm-v`
+
+### CLI Cold Start (model loads each time)
+
+| Run | Total Time (s) | Inference Time (ms) | Notes |
+|-----|----------------|---------------------|-------|
+| 1 | 27.5 | 26,669 | Fresh model load |
+| 2 | 31.2 | 30,380 | ~15% variance |
+
+### HTTP Hot Server (model in memory)
+
+| Run | Total Time (s) | Inference Time (ms) | Notes |
+|-----|----------------|---------------------|-------|
+| 1 | 11.2 | 11,042 | Consistent |
+| 2 | 11.4 | 11,235 | Consistent |
+
+### Analysis
+
+| Metric | Value |
+|--------|-------|
+| Cold start overhead | ~16-20 seconds |
+| Hot inference time | ~11 seconds |
+| Cold/Hot ratio | **2.5-3x slower** |
+| Model load time | ~16-20 seconds |
+
+### Implications for Product
+
+1. **One-off CLI calls:** 25-35 seconds per image (acceptable for occasional use)
+2. **Batch/repeated use:** Run server mode, get ~11s per image (2.5x faster)
+3. **AI agent integration:** Should prefer server mode if doing multiple analyses
