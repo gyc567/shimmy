@@ -1,5 +1,7 @@
 # Rust build artifacts
 **/target/
+target*/
+target-*
 /alt_target/
 /target-minimal/
 **/*.rs.bk
@@ -68,6 +70,20 @@ llama-cpp-minicpm/
 
 # AI instructions
 .github/instructions/
+
+# Screenshots and diagnostics
+00-diagnostic-startup.png
+*-diagnostic-*.png
+
+# Workspace files
+*.code-workspace
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Internal docs
+docs/GATEWARDEN_ARCHITECTURE_PROMPT.md
 
 # Package manager artifacts
 node_modules/
