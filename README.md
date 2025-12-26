@@ -15,7 +15,7 @@
   [![💝 Sponsor this project](https://img.shields.io/badge/💝_Sponsor_this_project-ea4aaa?style=for-the-badge&logo=github&logoColor=white)](https://github.com/sponsors/Michael-A-Kuykendall)
 </div>
 
-**Shimmy will be free forever.** No asterisks. No "free for now." No pivot to paid.
+**Shimmy Core will be free forever.** No asterisks. No "free for now." No pivot to paid for the core.
 
 ### 💝 Support Shimmy's Growth
 
@@ -406,6 +406,8 @@ Shimmy Core is not moving behind a paywall.
 
 Optional, paid tools (such as UI consoles or vision-related add-ons) may exist as
 separate components, but the core engine remains fully open.
+
+Paid options exist solely to fund core development and maintenance.
 
 ## License & Philosophy
 
