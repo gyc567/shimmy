@@ -62,9 +62,8 @@ docs/internal/
 memory/
 secret-scan/
 
-# Vision development (temporary - move to branch)
-shimmy-vision-console-update/
-src/bin/vision_preprocess_dump.rs
+# Vision libraries (build artifacts)
+libs/vision/
 
 # Third-party repos
 llama-cpp-minicpm/
