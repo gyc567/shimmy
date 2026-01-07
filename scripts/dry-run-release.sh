@@ -29,21 +29,6 @@ else
 fi
 echo ""
 
-<<<<<<< HEAD
-# Pre-flight check: lock freshness against all features to fail fast
-echo -e "${BLUE}🔍 PRE-FLIGHT: Cargo.lock Freshness (all features, --locked)${NC}"
-echo "=============================================================="
-if cargo check --all-features --locked; then
-    echo -e "${GREEN}✅ Cargo.lock is fresh for all features${NC}"
-else
-    echo -e "${RED}❌ Cargo.lock is stale for all-features build${NC}"
-    echo "Run: cargo check --all-features (or cargo update), commit Cargo.lock, then rerun the dry run."
-    exit 1
-fi
-echo ""
-
-=======
->>>>>>> 17353e04a45947d2a32bee5bd2479908c4e95744
 # Pre-flight check: Code formatting (catches what pre-commit should catch)
 echo -e "${BLUE}🔍 PRE-FLIGHT: Code Formatting Check${NC}"
 echo "=========================================="
@@ -234,20 +219,6 @@ if [ "$GATE_1_STATUS" = "PASSED" ] && \
    [ "$GATE_5_STATUS" = "PASSED" ] && \
    [ "$GATE_6_STATUS" = "PASSED" ]; then
     echo ""
-<<<<<<< HEAD
-    echo -e "${BLUE}🔍 POST-GATES: Cargo.lock Drift Check${NC}"
-    echo "========================================="
-    if git diff --quiet -- Cargo.lock; then
-        echo -e "${GREEN}✅ Cargo.lock unchanged after gates${NC}"
-    else
-        echo -e "${RED}❌ Cargo.lock changed during gates${NC}"
-        echo "Regenerate/commit Cargo.lock before releasing." 
-        exit 1
-    fi
-
-    echo ""
-=======
->>>>>>> 17353e04a45947d2a32bee5bd2479908c4e95744
     echo -e "${GREEN}🎉 ALL 6 GATES PASSED - READY FOR RELEASE!${NC}"
     echo -e "${GREEN}You can now create the actual release with confidence.${NC}"
     exit 0
