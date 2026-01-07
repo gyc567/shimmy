@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for Shimmy - optimized for cloud deployment
-FROM rust:1.70-slim as builder
+FROM rust:1.85-slim as builder
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -15,6 +15,10 @@ COPY Cargo.toml Cargo.lock ./
 
 # Copy source code
 COPY src ./src
+# Copy benches needed for manifest validation during build
+COPY benches ./benches
+# Copy templates required by include_str! in templates.rs
+COPY templates ./templates
 
 # Build release binary with minimal features for cloud deployment
 RUN cargo build --release --no-default-features --features huggingface

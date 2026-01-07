@@ -1128,3 +1128,116 @@ mod tests {
         assert_eq!(request.messages.as_ref().unwrap().len(), 1);
     }
 }
+
+#[cfg(feature = "vision")]
+#[axum::debug_handler]
+pub async fn vision(
+    State(state): State<Arc<AppState>>,
+    Json(mut req): Json<crate::vision::VisionRequest>,
+) -> impl IntoResponse {
+    // Extract license from environment or request
+    if req.license.is_none() {
+        req.license = std::env::var("SHIMMY_LICENSE_KEY").ok();
+    }
+
+    // Use default vision model or specified one
+    let env_model = std::env::var("SHIMMY_VISION_MODEL").ok();
+    #[cfg(feature = "vision")]
+    let model_name = req
+        .model
+        .as_deref()
+        .or(env_model.as_deref())
+        .unwrap_or("minicpm-v")
+        .to_string();
+
+    #[cfg(not(feature = "vision"))]
+    {
+        tracing::error!("Vision feature not enabled");
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": {
+                    "code": "VISION_FEATURE_DISABLED",
+                    "message": "Vision feature not enabled. This is a licensed feature.",
+                }
+            })),
+        )
+            .into_response();
+    }
+
+    fn map_vision_error_status(message: &str) -> axum::http::StatusCode {
+        if message.contains("Either image_base64 or url must be provided") {
+            return axum::http::StatusCode::BAD_REQUEST;
+        }
+        if message.starts_with("Failed to decode base64 image") {
+            return axum::http::StatusCode::BAD_REQUEST;
+        }
+        if message.starts_with("Failed to preprocess image") {
+            return axum::http::StatusCode::UNPROCESSABLE_ENTITY;
+        }
+        if message.contains("Vision model '") && message.contains("not available in Ollama") {
+            return axum::http::StatusCode::UNPROCESSABLE_ENTITY;
+        }
+        if message.contains("Failed to fetch image from URL") {
+            if message.to_lowercase().contains("timed out") {
+                return axum::http::StatusCode::GATEWAY_TIMEOUT;
+            }
+            return axum::http::StatusCode::BAD_GATEWAY;
+        }
+        if message.contains("Vision inference timed out") {
+            return axum::http::StatusCode::GATEWAY_TIMEOUT;
+        }
+        if message.contains("Failed to load vision model")
+            || message.contains("Vision inference failed")
+        {
+            return axum::http::StatusCode::BAD_GATEWAY;
+        }
+
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    }
+
+    // For now, during migration, call the old vision function directly
+    // TODO: Use the provider once it's properly implemented
+    match state
+        .vision_provider
+        .process_vision_request(req, model_name, &state)
+        .await
+    {
+        Ok(response) => axum::Json(response).into_response(),
+        Err(e) => {
+            // Check if it's a license error
+            if let Some(license_err) = e.downcast_ref::<crate::vision_license::VisionLicenseError>()
+            {
+                return (
+                    license_err.to_status_code(),
+                    axum::Json(license_err.to_json_error()),
+                )
+                    .into_response();
+            }
+
+            let full_message = e.to_string();
+            let status = map_vision_error_status(&full_message);
+
+            tracing::error!(status = %status, "Vision processing error: {}", full_message);
+            // Expose client error messages (4xx) to help users fix their requests.
+            // Hide server error details (5xx) unless running in dev mode.
+            let message =
+                if status.is_client_error() || std::env::var("SHIMMY_VISION_DEV_MODE").is_ok() {
+                    full_message
+                } else {
+                    "Vision processing error".to_string()
+                };
+
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": {
+                        "code": "VISION_PROCESSING_ERROR",
+                        "message": message,
+                    }
+                })),
+            )
+                .into_response()
+        }
+    }
+}

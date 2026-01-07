@@ -16,11 +16,19 @@ mod openai_compat;
 mod port_manager;
 mod server;
 mod templates;
+#[cfg(feature = "vision")]
+mod vision;
+#[cfg(feature = "vision")]
+mod vision_adapter;
+#[cfg(feature = "vision")]
+mod vision_license;
 mod util {
     pub mod diag;
     pub mod memory;
 }
 
+#[cfg(feature = "vision")]
+use base64::{engine::general_purpose, Engine as _};
 use clap::Parser;
 use model_registry::{ModelEntry, Registry};
 use std::path::PathBuf;
@@ -32,16 +40,35 @@ pub struct AppState {
     pub registry: Registry,
     pub observability: observability::ObservabilityManager,
     pub response_cache: cache::ResponseCache,
+    #[cfg(feature = "vision")]
+    pub vision_provider: Box<dyn vision_adapter::VisionProvider + Send + Sync>,
 }
 
 impl AppState {
     pub fn new(engine: Box<dyn engine::InferenceEngine>, registry: Registry) -> Self {
-        Self {
+        #[allow(unused_mut)]
+        let mut state = Self {
             engine,
             registry,
             observability: observability::ObservabilityManager::new(),
             response_cache: cache::ResponseCache::new(),
+            #[cfg(feature = "vision")]
+            vision_provider: Box::new(vision_adapter::PrivateVisionProvider),
+        };
+
+        #[cfg(feature = "vision")]
+        {
+            // Load license cache asynchronously
+            #[allow(unused_variables)]
+            let provider = state.vision_provider.as_ref();
+            // Note: License cache loading will be handled by the private crate
+            tokio::spawn(async move {
+                // The private crate handles its own cache loading
+                tracing::info!("Vision provider initialized");
+            });
         }
+
+        state
     }
 }
 
@@ -317,6 +344,8 @@ async fn main() -> anyhow::Result<()> {
                 println!("   • POST /api/generate (streaming + non-streaming)");
                 println!("   • GET  /health (health check + metrics)");
                 println!("   • GET  /v1/models (OpenAI-compatible)");
+                #[cfg(feature = "vision")]
+                println!("   • POST /api/vision (image/web analysis)");
 
                 info!(%addr, models=%available_models.len(), "shimmy serving with {} available models", available_models.len());
                 return server::run(addr, enhanced_state).await;
@@ -338,6 +367,8 @@ async fn main() -> anyhow::Result<()> {
             println!("   • POST /api/generate (streaming + non-streaming)");
             println!("   • GET  /health (health check + metrics)");
             println!("   • GET  /v1/models (OpenAI-compatible)");
+            #[cfg(feature = "vision")]
+            println!("   • POST /api/vision (image/web analysis)");
 
             info!(%addr, models=%available_models.len(), "shimmy serving with {} available models", available_models.len());
             server::run(addr, state).await?;
@@ -608,6 +639,77 @@ async fn main() -> anyhow::Result<()> {
                 Ok(message) => println!("{}", message),
                 Err(e) => {
                     eprintln!("❌ Template generation failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        #[cfg(feature = "vision")]
+        cli::Command::Vision {
+            image,
+            url,
+            mode,
+            output,
+            timeout,
+            license,
+            raw,
+            screenshot,
+            viewport_width,
+            viewport_height,
+            ..
+        } => {
+            // Build vision request
+            let request = crate::vision::VisionRequest {
+                image_base64: image.map(|path| {
+                    // Read image file and encode as base64
+                    match std::fs::read(&path) {
+                        Ok(data) => general_purpose::STANDARD.encode(&data),
+                        Err(e) => {
+                            eprintln!("❌ Failed to read image file '{}': {}", path, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }),
+                url,
+                mode: mode.clone(),
+                model: None,
+                timeout_ms: Some(timeout),
+                raw: Some(raw),
+                license,
+                screenshot: Some(screenshot),
+                viewport_width: Some(viewport_width),
+                viewport_height: Some(viewport_height),
+            };
+
+            let env_model = std::env::var("SHIMMY_VISION_MODEL").ok();
+            let model_name = request
+                .model
+                .as_deref()
+                .or(env_model.as_deref())
+                .unwrap_or("minicpm-v")
+                .to_string();
+
+            // Process vision request (async)
+            let license_manager = crate::vision_license::VisionLicenseManager::new();
+            // Load cache
+            let _ = license_manager.load_cache().await;
+
+            match crate::vision::process_vision_request(
+                request,
+                &model_name,
+                &license_manager,
+                &state,
+            )
+            .await
+            {
+                Ok(response) => {
+                    if output == "json" {
+                        println!("{}", serde_json::to_string_pretty(&response).unwrap());
+                    } else {
+                        println!("Vision analysis complete. Use --output json for full results.");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("❌ Vision processing failed: {}", e);
                     std::process::exit(1);
                 }
             }

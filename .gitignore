@@ -39,6 +39,14 @@ Thumbs.db
 docs-internal/
 .internal/
 
+# Cloudflare Worker local state / secrets
+cloudflare-worker/.wrangler/
+.dev.vars
+cloudflare-worker/.dev.vars
+
+# Internal licensing notes (contains secrets)
+memory/VISION_STRIPE_KEYGEN_ARCHITECTURE.md
+
 # Copilot instructions (internal only)
 .github/copilot-instructions.md
 
@@ -88,6 +96,38 @@ scripts/chat2.md
 
 # Internal docs
 docs/GATEWARDEN_ARCHITECTURE_PROMPT.md
+
+# Test screenshots (large binary files)
+test-screenshots/
+
+# Local vendor/build dirs (not part of shimmy repo)
+llama-cpp-minicpm/
+target-gpu/
+target-gpu-*/
+
+# Vision development output and testing artifacts
+out/
+assets/vision-samples/preprocessed-*/
+nul
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Development-only binaries (not for distribution)
+src/bin/vision_preprocess_dump.rs
+scripts/vision_samples_run.sh
+
+# Windows/Git artifacts
+%s
+
+# Local logs and scratch files
+output.md
+test_image.b64
+*.b64
+00-diagnostic-startup.png
+docs/shimmy-workspace.code-workspace
+docs/internal/SHIMMY_VISION_PRICING_STRATEGY.md
 
 # Package manager artifacts
 node_modules/

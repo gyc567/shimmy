@@ -1,0 +1,72 @@
+# Vision Testing Container - Linux ARM64
+FROM ubuntu:22.04
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    pkg-config \
+    libssl-dev \
+    libclang-dev \
+    git \
+    curl \
+    python3 \
+    python3-pip \
+    crossbuild-essential-arm64 \
+    qemu-user-static \
+    binfmt-support \
+    && rm -rf /var/lib/apt/lists/*
+
+# Register QEMU for ARM64
+RUN docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+# Install Rust with ARM64 target
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup target add aarch64-unknown-linux-gnu
+
+# Set working directory
+WORKDIR /workspace
+
+# Copy source code
+COPY . .
+
+# Build with vision features for ARM64 (CPU-only)
+RUN cargo build --release --target aarch64-unknown-linux-gnu --features llama,vision
+
+# Install Python test dependencies
+RUN pip3 install requests
+
+# Create test script
+RUN cat > /workspace/run_vision_tests.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "🧪 Starting Vision Cross-Platform Tests"
+echo "Platform: Linux ARM64"
+echo "================================="
+
+# Set test environment
+export SHIMMY_VISION_MAX_LONG_EDGE=1024
+export SHIMMY_VISION_MAX_PIXELS=2500000
+export SHIMMY_VISION_AUTO_DOWNLOAD=1
+
+# Note: ARM64 testing will be CPU-only (no GPU in container)
+echo "⚠️ ARM64 testing: CPU-only mode (no GPU acceleration)"
+
+# Run the cross-compiled vision test
+echo "🖼️ Running vision functionality tests..."
+python3 scripts/test_cross_compiled_vision.py \
+    --binary ./target/aarch64-unknown-linux-gnu/release/shimmy \
+    --test-image assets/vision-samples/final-test.png \
+    --license "test-license-key" \
+    --output-report /workspace/test-results-linux-arm64.json \
+    --cpu-only
+
+echo "✅ Vision tests completed for Linux ARM64"
+EOF
+
+RUN chmod +x /workspace/run_vision_tests.sh
+
+# Default command
+CMD ["/workspace/run_vision_tests.sh"]

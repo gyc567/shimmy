@@ -22,6 +22,12 @@ pub mod safetensors_adapter;
 pub mod server;
 pub mod templates;
 pub mod tools;
+#[cfg(feature = "vision")]
+pub mod vision;
+#[cfg(feature = "vision")]
+pub mod vision_adapter;
+#[cfg(feature = "vision")]
+pub mod vision_license;
 pub mod util {
     pub mod diag;
     pub mod memory;
@@ -42,6 +48,8 @@ pub struct AppState {
     pub registry: model_registry::Registry,
     pub observability: observability::ObservabilityManager,
     pub response_cache: cache::ResponseCache,
+    #[cfg(feature = "vision")]
+    pub vision_provider: Box<dyn vision_adapter::VisionProvider + Send + Sync>,
 }
 
 impl AppState {
@@ -54,6 +62,8 @@ impl AppState {
             registry,
             observability: observability::ObservabilityManager::new(),
             response_cache: cache::ResponseCache::new(),
+            #[cfg(feature = "vision")]
+            vision_provider: Box::new(vision_adapter::PrivateVisionProvider),
         }
     }
 }

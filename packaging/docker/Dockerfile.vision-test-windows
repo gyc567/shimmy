@@ -1,0 +1,109 @@
+# Vision Testing Container - Windows x86_64 (via Wine)
+FROM ubuntu:22.04
+
+# Install system dependencies including Wine
+RUN dpkg --add-architecture i386 && apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    pkg-config \
+    libssl-dev \
+    libclang-dev \
+    git \
+    curl \
+    python3 \
+    python3-pip \
+    wine \
+    wine32 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust with Windows target
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN rustup target add x86_64-pc-windows-msvc
+
+# Install Windows build dependencies
+RUN apt-get update && apt-get install -y \
+    gcc-mingw-w64 \
+    g++-mingw-w64 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /workspace
+
+# Copy source code
+COPY . .
+
+# Build with vision features for Windows
+RUN cargo build --release --target x86_64-pc-windows-msvc --features llama,vision,llama-vulkan
+
+# Install Python test dependencies
+RUN pip3 install requests pypiwin32
+
+# Create test script
+RUN cat > /workspace/run_vision_tests.sh << 'EOF'
+#!/bin/bash
+set -e
+
+echo "🧪 Starting Vision Cross-Platform Tests"
+echo "Platform: Windows x86_64 (via Wine)"
+echo "==================================="
+
+# Set test environment
+export SHIMMY_VISION_MAX_LONG_EDGE=1024
+export SHIMMY_VISION_MAX_PIXELS=2500000
+export SHIMMY_VISION_AUTO_DOWNLOAD=1
+
+# Configure Wine for Windows testing
+export WINEPREFIX=/root/.wine
+export WINEARCH=win64
+
+echo "🍷 Setting up Wine environment..."
+wineboot --init || true
+sleep 5
+
+# Note: Windows testing will use Vulkan GPU acceleration
+echo "🎮 Windows testing: Vulkan GPU mode"
+
+# Create a wrapper script for Wine execution
+cat > /workspace/test_vision_wine.py << 'PYTHON_EOF'
+#!/usr/bin/env python3
+import subprocess
+import sys
+import os
+
+def run_wine_command(cmd):
+    """Run command under Wine"""
+    wine_cmd = ["wine"] + cmd
+    return subprocess.run(wine_cmd, capture_output=True, text=True)
+
+# Test the Windows binary
+print("🖼️ Running vision functionality tests under Wine...")
+result = run_wine_command([
+    "target/x86_64-pc-windows-msvc/release/shimmy.exe",
+    "vision",
+    "--image", "assets/vision-samples/final-test.png",
+    "--mode", "ocr",
+    "--license", "test-license-key"
+])
+
+if result.returncode == 0:
+    print("✅ Vision test passed under Wine")
+    print("Output:", result.stdout)
+else:
+    print("❌ Vision test failed under Wine")
+    print("Error:", result.stderr)
+    sys.exit(1)
+
+# Additional API testing would go here
+print("✅ Vision tests completed for Windows x86_64 (Wine)")
+PYTHON_EOF
+
+python3 /workspace/test_vision_wine.py
+
+echo "✅ Vision tests completed for Windows x86_64 (Wine)"
+EOF
+
+RUN chmod +x /workspace/run_vision_tests.sh
+
+# Default command
+CMD ["/workspace/run_vision_tests.sh"]

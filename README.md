@@ -315,6 +315,59 @@ shimmy probe model-name         # Verify model loads
 shimmy gpu-info                 # Show GPU backend status
 ```
 
+## 👁️ Vision Analysis (Keygen-Licensed)
+
+<div align="center">
+  <img src="assets/shimmy-vision.png" alt="Shimmy Vision" width="300" height="auto" />
+</div>
+
+Shimmy Vision provides AI-powered image and web page analysis with OCR, layout detection, and visual understanding. **MiniCPM-V is the vision model** — it will be automatically downloaded on first use.
+
+> **⚠️ GPU Required**: Vision processing requires a GPU for reasonable performance. CPU-only operation is extremely slow and not recommended for production use.
+
+### Installation
+```bash
+# Install with vision + GPU support (recommended)
+cargo install shimmy --features llama,vision,llama-cuda
+
+# CPU-only (not recommended for vision)
+cargo install shimmy --features llama,vision
+```
+
+### Environment Variables
+Set your license key:
+```bash
+export SHIMMY_LICENSE_KEY="your-license-key"
+```
+
+### Usage
+```bash
+# Analyze local image
+shimmy vision --image path/to/image.png --license your-license-key
+
+# Analyze web page
+shimmy vision --url https://example.com --mode full --license your-license-key
+
+# HTTP API
+curl -X POST http://localhost:11435/api/vision \
+  -H "Content-Type: application/json" \
+  -d '{"image_base64": "base64-encoded-image", "mode": "full", "license": "your-key"}'
+```
+
+### Vision Models
+Shimmy Vision is hard-locked to **MiniCPM-V 2.6** for quality/support.
+
+Model controls:
+- `SHIMMY_VISION_AUTO_DOWNLOAD` (default: true)
+- `SHIMMY_VISION_MODEL_DIR` (override the model cache directory)
+
+### Analysis Modes
+- `full`: Complete analysis (OCR + layout + visual)
+- `ocr`: Text extraction only
+- `layout`: Structure and positioning
+- `brief`: Summary analysis
+- `web`: Web page analysis
+
 ## Technical Architecture
 
 - **Rust + Tokio**: Memory-safe, async performance
@@ -325,6 +378,7 @@ shimmy gpu-info                 # Show GPU backend status
 
 ### 🚀 Advanced Features
 
+- **👁️ Vision Analysis**: Image and web page analysis with OCR, layout detection, and visual understanding (Keygen-licensed)
 - **🧠 MOE CPU Offloading**: Hybrid GPU/CPU processing for large models (70B+)
 - **🎯 Smart Model Filtering**: Automatically excludes non-language models (Stable Diffusion, Whisper, CLIP)
 - **🛡️ 6-Gate Release Validation**: Constitutional quality limits ensure reliability

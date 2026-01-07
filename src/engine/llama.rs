@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 use anyhow::Result;
 use async_trait::async_trait;
+use tracing::warn;
 
 use super::{GenOptions, InferenceEngine, LoadedModel, ModelSpec};
 
@@ -63,10 +64,24 @@ fn get_or_init_backend() -> Result<&'static shimmy_llama_cpp_2::llama_backend::L
     result.as_ref().map_err(|e| anyhow!("{}", e))
 }
 
-#[derive(Default)]
 pub struct LlamaEngine {
     gpu_backend: GpuBackend,
     moe_config: MoeConfig,
+    #[cfg(feature = "llama")]
+    loaded: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<LlamaLoaded>>>,
+    >,
+}
+
+impl Default for LlamaEngine {
+    fn default() -> Self {
+        Self {
+            gpu_backend: GpuBackend::default(),
+            moe_config: MoeConfig::default(),
+            #[cfg(feature = "llama")]
+            loaded: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -232,6 +247,8 @@ impl LlamaEngine {
         Self {
             gpu_backend: GpuBackend::detect_best(),
             moe_config: MoeConfig::default(),
+            #[cfg(feature = "llama")]
+            loaded: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -250,6 +267,8 @@ impl LlamaEngine {
         Self {
             gpu_backend,
             moe_config: MoeConfig::default(),
+            #[cfg(feature = "llama")]
+            loaded: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -341,6 +360,77 @@ impl LlamaEngine {
     }
 }
 
+/// Helper function to find the projector blob for Ollama vision models
+#[cfg(feature = "llama")]
+fn find_ollama_projector_blob(model_name: &str) -> Option<std::path::PathBuf> {
+    fn projector_debug_enabled() -> bool {
+        match std::env::var("SHIMMY_OLLAMA_PROJECTOR_DEBUG") {
+            Ok(v) => {
+                let v = v.trim();
+                !v.is_empty() && v != "0" && v.to_lowercase() != "false"
+            }
+            Err(_) => false,
+        }
+    }
+
+    // For Ollama models, we need to find the projector blob
+    // This is a bit hacky - we run `ollama show <model> --modelfile` and parse the output
+    // to find the second FROM statement which should be the projector
+
+    // Extract the actual model name (remove registry prefix if present)
+    let actual_model_name = if model_name.contains("registry.ollama.ai/library/") {
+        model_name
+            .strip_prefix("registry.ollama.ai/library/")?
+            .replace('/', ":")
+    } else {
+        model_name.to_string()
+    };
+
+    if projector_debug_enabled() {
+        eprintln!(
+            "DEBUG: Looking for projector for model: {}",
+            actual_model_name
+        );
+    }
+
+    // Run ollama show to get the modelfile
+    let output = std::process::Command::new("ollama")
+        .args(["show", actual_model_name.as_str(), "--modelfile"])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        if projector_debug_enabled() {
+            eprintln!("DEBUG: ollama show failed");
+        }
+        return None;
+    }
+
+    let modelfile = String::from_utf8_lossy(&output.stdout);
+    if projector_debug_enabled() {
+        eprintln!(
+            "DEBUG: Received modelfile output ({} bytes)",
+            modelfile.len()
+        );
+    }
+
+    // Parse the FROM statements
+    let mut from_lines = modelfile
+        .lines()
+        .filter(|line| line.trim().starts_with("FROM "))
+        .map(|line| line.trim().strip_prefix("FROM ").unwrap_or(line.trim()));
+
+    // Skip the first FROM (model), take the second (projector)
+    let _model_from = from_lines.next()?;
+    let projector_from = from_lines.next()?;
+
+    if projector_debug_enabled() {
+        eprintln!("DEBUG: Found projector: {}", projector_from);
+    }
+
+    Some(std::path::PathBuf::from(projector_from))
+}
+
 #[async_trait]
 impl InferenceEngine for LlamaEngine {
     async fn load(&self, spec: &ModelSpec) -> Result<Box<dyn LoadedModel>> {
@@ -349,6 +439,16 @@ impl InferenceEngine for LlamaEngine {
             use anyhow::anyhow;
             use shimmy_llama_cpp_2 as llama;
             use std::num::NonZeroU32;
+            use std::sync::Arc;
+
+            // Fast-path: return cached model if already loaded
+            if let Ok(cache) = self.loaded.lock() {
+                if let Some(model) = cache.get(&spec.name) {
+                    return Ok(Box::new(CachedLlamaLoaded {
+                        inner: Arc::clone(model),
+                    }));
+                }
+            }
 
             // Use global singleton backend (fixes Issue #128: BackendAlreadyInitialized)
             let be = get_or_init_backend()?;
@@ -436,14 +536,59 @@ impl InferenceEngine for LlamaEngine {
                     .map_err(|e| anyhow!("lora set: {e:?}"))?;
                 info!(adapter=%lora_path.display(), "LoRA adapter attached");
             }
+
+            // Vision models: record projector path, defer loading to external mtmd CLI
+            let projector_path = if spec.name.to_lowercase().contains("minicpm")
+                || spec.name.to_lowercase().contains("vision")
+            {
+                // Prefer local mmproj if present
+                let mut projector_path = spec.base_path.with_file_name("mmproj-model-f16.gguf");
+
+                // For Ollama models, locate the projector blob via modelfile
+                if !projector_path.exists() && spec.base_path.to_string_lossy().contains("blobs") {
+                    if let Some(projector_blob) = find_ollama_projector_blob(&spec.name) {
+                        projector_path = projector_blob;
+                        info!("Found Ollama projector: {}", projector_path.display());
+                    } else {
+                        warn!("Failed to find Ollama projector for model: {}", spec.name);
+                    }
+                }
+
+                if projector_path.exists() {
+                    info!(
+                        "Vision projector path recorded: {}",
+                        projector_path.display()
+                    );
+                    Some(projector_path)
+                } else {
+                    warn!(
+                        "Vision model detected but no projector found at {}",
+                        projector_path.display()
+                    );
+                    None
+                }
+            } else {
+                None
+            };
+
             // Store both model and context together to maintain proper lifetimes
             // The context lifetime is tied to &model; storing both in the same struct ensures safety
             let ctx: llama::context::LlamaContext<'static> =
                 unsafe { std::mem::transmute(ctx_tmp) };
-            Ok(Box::new(LlamaLoaded {
+            let loaded = Arc::new(LlamaLoaded {
                 model,
                 ctx: Mutex::new(ctx),
-            }))
+                projector: None,
+                model_path: spec.base_path.clone(),
+                projector_path,
+            });
+
+            // Cache for reuse (best-effort; ignore poisoning)
+            if let Ok(mut cache) = self.loaded.lock() {
+                cache.insert(spec.name.clone(), Arc::clone(&loaded));
+            }
+
+            Ok(Box::new(CachedLlamaLoaded { inner: loaded }))
         }
         #[cfg(not(feature = "llama"))]
         {
@@ -457,6 +602,15 @@ impl InferenceEngine for LlamaEngine {
 struct LlamaLoaded {
     model: shimmy_llama_cpp_2::model::LlamaModel,
     ctx: Mutex<shimmy_llama_cpp_2::context::LlamaContext<'static>>,
+    #[allow(dead_code)]
+    projector: Option<shimmy_llama_cpp_2::model::LlamaModel>, // For vision models
+    model_path: std::path::PathBuf,
+    projector_path: Option<std::path::PathBuf>,
+}
+
+#[cfg(feature = "llama")]
+struct CachedLlamaLoaded {
+    inner: std::sync::Arc<LlamaLoaded>,
 }
 
 #[cfg(feature = "llama")]
@@ -556,6 +710,328 @@ impl LoadedModel for LlamaLoaded {
 
         Ok(out)
     }
+
+    async fn generate_vision(
+        &self,
+        image_data: &[u8],
+        prompt: &str,
+        _opts: GenOptions,
+        _on_token: Option<Box<dyn FnMut(String) + Send>>,
+    ) -> Result<String> {
+        // Check if we have the model and projector paths for external CLI execution
+        if self.model_path.as_os_str().is_empty() || self.projector_path.is_none() {
+            return Err(anyhow::anyhow!(
+                "This model does not support vision (missing model or projector paths)"
+            ));
+        }
+
+        fn mtmd_np_from_env() -> u32 {
+            let raw = std::env::var("SHIMMY_VISION_MTMD_NP")
+                .or_else(|_| std::env::var("SHIMMY_MTMD_NP"))
+                .ok();
+            let parsed = raw
+                .as_deref()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .unwrap_or(1);
+            parsed.clamp(1, 64)
+        }
+
+        fn mtmd_ctx_from_env() -> u32 {
+            let raw = std::env::var("SHIMMY_VISION_MTMD_CTX")
+                .or_else(|_| std::env::var("SHIMMY_MTMD_CTX"))
+                .ok();
+            let parsed = raw
+                .as_deref()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .unwrap_or(4096);
+            parsed.clamp(512, 131072)
+        }
+
+        fn run_mtmd(
+            mtmd_path: &std::path::Path,
+            model_path: &std::path::Path,
+            projector_path: &std::path::Path,
+            image_path: &std::path::Path,
+            prompt: &str,
+            n_parallel: u32,
+            ctx_size: u32,
+        ) -> std::io::Result<std::process::Output> {
+            std::process::Command::new(mtmd_path)
+                // Avoid global LLAMA_ARG_* env vars overriding our explicit CLI flags.
+                // In particular, LLAMA_ARG_N_PARALLEL can force n_seq_max high, shrinking
+                // per-sequence context (n_ctx_seq) and triggering "failed to find a memory slot".
+                .env_remove("LLAMA_ARG_N_PARALLEL")
+                .env_remove("LLAMA_ARG_CTX_SIZE")
+                .env_remove("LLAMA_ARG_BATCH")
+                .env_remove("LLAMA_ARG_UBATCH")
+                .env_remove("LLAMA_ARG_N_PREDICT")
+                .env_remove("LLAMA_ARG_THREADS")
+                .env_remove("LLAMA_ARG_THREADS_BATCH")
+                .arg("-m")
+                .arg(model_path)
+                .arg("--mmproj")
+                .arg(projector_path)
+                .arg("-c")
+                .arg(ctx_size.to_string())
+                // MiniCPM-V often slices images; mtmd needs enough parallel sequence slots.
+                .arg("-np")
+                .arg(n_parallel.to_string())
+                .arg("--image")
+                .arg(image_path)
+                .arg("-p")
+                .arg(prompt)
+                .arg("--temp")
+                .arg("0.1")
+                .output()
+        }
+
+        // Save image to temp file
+        let temp_dir = std::env::temp_dir();
+        // Preprocessed bytes are PNG, so write with .png to avoid decoder confusion.
+        // Use a unique name per request to avoid collisions under concurrent /api/vision.
+        static IMAGE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let counter = IMAGE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let image_path = temp_dir.join(format!(
+            "shimmy_vision_{}_{}_{}.png",
+            std::process::id(),
+            counter,
+            nanos
+        ));
+        std::fs::write(&image_path, image_data)?;
+
+        // Call mtmd CLI (consolidated multimodal runner)
+        let workspace_dir = std::env::current_dir()?;
+        let mtmd_candidates = [
+            workspace_dir
+                .join("llama-cpp-minicpm")
+                .join("build-cuda")
+                .join("bin")
+                .join("Release")
+                .join("llama-mtmd-cli.exe"),
+            workspace_dir
+                .join("llama-cpp-minicpm")
+                .join("build")
+                .join("bin")
+                .join("Release")
+                .join("llama-mtmd-cli.exe"),
+            workspace_dir
+                .join("llama-cpp-minicpm")
+                .join("build")
+                .join("bin")
+                .join("Debug")
+                .join("llama-mtmd-cli.exe"),
+        ];
+
+        let mtmd_path = mtmd_candidates
+            .iter()
+            .find(|p| p.exists())
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("llama-mtmd-cli.exe not found; build with cmake --build build --target llama-mtmd-cli"))?;
+
+        let projector_path = self.projector_path.as_ref().unwrap();
+        let n_parallel = mtmd_np_from_env();
+        let ctx_size = mtmd_ctx_from_env();
+        let mut current_n_parallel = n_parallel;
+        let mut current_ctx_size = ctx_size;
+
+        let trace = std::env::var("SHIMMY_VISION_TRACE").is_ok();
+        if trace {
+            tracing::info!(
+                target: "vision",
+                stage = "mtmd_start",
+                mtmd = %mtmd_path.display(),
+                model = %self.model_path.display(),
+                mmproj = %projector_path.display(),
+                image = %image_path.display(),
+                n_parallel = current_n_parallel,
+                ctx_size = current_ctx_size,
+                prompt_chars = prompt.len(),
+                image_bytes = image_data.len(),
+                "invoking mtmd"
+            );
+        }
+        let mut output = run_mtmd(
+            &mtmd_path,
+            &self.model_path,
+            projector_path,
+            &image_path,
+            prompt,
+            current_n_parallel,
+            current_ctx_size,
+        )?;
+
+        // Retry with more slots if mtmd reports the known MiniCPM "memory slot" failure.
+        // This shows up as HTTP 500 in Shimmy if we don't handle it.
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            if trace {
+                tracing::warn!(
+                    target: "vision",
+                    stage = "mtmd_fail",
+                    status = %output.status,
+                    stderr_chars = stderr.len(),
+                    "mtmd failed"
+                );
+            }
+
+            let is_slot_failure = stderr.contains("failed to find a memory slot")
+                || stderr.contains("failed to decode token")
+                || stderr.contains("failed to decode text")
+                || stderr.contains("failed to decode image");
+
+            // mtmd can fail when the prompt token count exceeds per-sequence context.
+            // Example: "find_slot: n_tokens = 323 > size = 256".
+            let find_slot_re = regex::Regex::new(r"find_slot: n_tokens = (\d+) > size = (\d+)")
+                .expect("valid regex");
+
+            // Attempt 1: prefer minimizing parallelism (maximizes per-seq context) and increasing ctx.
+            if is_slot_failure {
+                let retry_n_parallel = 1;
+                let retry_ctx = current_ctx_size.max(8192);
+                current_n_parallel = retry_n_parallel;
+                current_ctx_size = retry_ctx;
+                if trace {
+                    tracing::info!(
+                        target: "vision",
+                        stage = "mtmd_retry",
+                        attempt = 1,
+                        n_parallel = current_n_parallel,
+                        ctx_size = current_ctx_size,
+                        "retrying mtmd"
+                    );
+                }
+                output = run_mtmd(
+                    &mtmd_path,
+                    &self.model_path,
+                    projector_path,
+                    &image_path,
+                    prompt,
+                    current_n_parallel,
+                    current_ctx_size,
+                )?;
+
+                // If it still fails with the same slot issue, try one more time with more slots.
+                if !output.status.success() {
+                    let stderr_retry = String::from_utf8_lossy(&output.stderr);
+                    let still_slot_failure = stderr_retry.contains("failed to find a memory slot")
+                        || stderr_retry.contains("failed to decode token")
+                        || stderr_retry.contains("failed to decode text")
+                        || stderr_retry.contains("failed to decode image");
+
+                    if still_slot_failure {
+                        let retry2_ctx = current_ctx_size.max(16384);
+                        current_ctx_size = retry2_ctx;
+                        if trace {
+                            tracing::info!(
+                                target: "vision",
+                                stage = "mtmd_retry",
+                                attempt = 2,
+                                n_parallel = current_n_parallel,
+                                ctx_size = current_ctx_size,
+                                "retrying mtmd"
+                            );
+                        }
+                        output = run_mtmd(
+                            &mtmd_path,
+                            &self.model_path,
+                            projector_path,
+                            &image_path,
+                            prompt,
+                            current_n_parallel,
+                            current_ctx_size,
+                        )?;
+                    }
+                }
+            }
+
+            // Attempt 2: if mtmd tells us n_tokens > size, increase -c to satisfy it.
+            if !output.status.success() {
+                let stderr2 = String::from_utf8_lossy(&output.stderr);
+                if let Some(caps) = find_slot_re.captures(&stderr2) {
+                    let n_tokens = caps
+                        .get(1)
+                        .and_then(|m| m.as_str().parse::<u32>().ok())
+                        .unwrap_or(0);
+                    // Want n_ctx_seq >= n_tokens + margin.
+                    let needed_per_seq = (n_tokens + 128).max(512);
+                    let needed_ctx = current_n_parallel
+                        .saturating_mul(needed_per_seq)
+                        .max(current_ctx_size);
+                    let needed_ctx = needed_ctx.clamp(512, 131072);
+                    current_ctx_size = needed_ctx;
+                    if trace {
+                        tracing::info!(
+                            target: "vision",
+                            stage = "mtmd_retry",
+                            attempt = 3,
+                            n_parallel = current_n_parallel,
+                            ctx_size = current_ctx_size,
+                            "retrying mtmd based on find_slot"
+                        );
+                    }
+                    output = run_mtmd(
+                        &mtmd_path,
+                        &self.model_path,
+                        projector_path,
+                        &image_path,
+                        prompt,
+                        current_n_parallel,
+                        current_ctx_size,
+                    )?;
+                }
+            }
+        }
+
+        // Clean up temp file
+        let _ = std::fs::remove_file(&image_path);
+
+        if output.status.success() {
+            if trace {
+                tracing::info!(
+                    target: "vision",
+                    stage = "mtmd_ok",
+                    stdout_chars = output.stdout.len(),
+                    "mtmd succeeded"
+                );
+            }
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(anyhow::anyhow!(
+                "minicpmv-cli failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+}
+
+#[cfg(feature = "llama")]
+#[async_trait]
+impl LoadedModel for CachedLlamaLoaded {
+    async fn generate(
+        &self,
+        prompt: &str,
+        opts: GenOptions,
+        on_token: Option<Box<dyn FnMut(String) + Send>>,
+    ) -> Result<String> {
+        self.inner.generate(prompt, opts, on_token).await
+    }
+
+    async fn generate_vision(
+        &self,
+        image_data: &[u8],
+        prompt: &str,
+        opts: GenOptions,
+        on_token: Option<Box<dyn FnMut(String) + Send>>,
+    ) -> Result<String> {
+        self.inner
+            .generate_vision(image_data, prompt, opts, on_token)
+            .await
+    }
 }
 
 /// Fallback implementation when llama.cpp feature is not enabled
@@ -574,6 +1050,21 @@ impl LoadedModel for LlamaFallback {
     ) -> Result<String> {
         let fallback_msg =
             "Llama.cpp support not enabled. Build with --features llama for full functionality.";
+        if let Some(cb) = on_token.as_mut() {
+            cb(fallback_msg.to_string());
+        }
+        Ok(format!("[INFO] {} Input: {}", fallback_msg, prompt))
+    }
+
+    async fn generate_vision(
+        &self,
+        _image_data: &[u8],
+        prompt: &str,
+        _opts: GenOptions,
+        mut on_token: Option<Box<dyn FnMut(String) + Send>>,
+    ) -> Result<String> {
+        let fallback_msg =
+            "Llama.cpp support not enabled. Build with --features llama for vision functionality.";
         if let Some(cb) = on_token.as_mut() {
             cb(fallback_msg.to_string());
         }

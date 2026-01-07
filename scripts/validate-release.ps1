@@ -44,12 +44,12 @@ if ($LASTEXITCODE -eq 0) { Pass "Help command works" } else { Fail "Help command
 # 4. TEMPLATE PACKAGING (Issue #60)
 Info "Validating template packaging..."
 $packageList = cargo package --list --allow-dirty 2>&1 | Out-String
-if ($packageList -match "templates/docker/Dockerfile") { Pass "Dockerfile included in package" }
+if ($packageList -match "templates[/\\]docker[/\\]Dockerfile") { Pass "Dockerfile included in package" }
 else { Fail "Dockerfile missing from package" }
 
 # 5. TEMPLATE GENERATION TEST
 $tempDir = "temp-test-$(Get-Random)"
-& $binary init docker $tempDir | Out-Null
+& $binary init --template docker --output $tempDir | Out-Null
 if ((Test-Path "$tempDir/Dockerfile") -and ($LASTEXITCODE -eq 0)) {
     Pass "Template generation works"
 } else { Fail "Template generation failed" }

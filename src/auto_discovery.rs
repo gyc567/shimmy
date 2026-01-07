@@ -305,7 +305,7 @@ impl ModelAutoDiscovery {
                     let group_key = format!("{}{}", base_name, extension);
                     shard_groups
                         .entry(group_key)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(file_path.clone());
                     processed_files.insert(file_path.clone());
                 }
@@ -677,12 +677,22 @@ impl ModelAutoDiscovery {
                                             format!("{}:{}", path_components.join("/"), entry_name)
                                         };
 
+                                        // PPT Invariant: GGUF files must use Llama backend
+                                        let model_type =
+                                            if blob_path.extension().and_then(|s| s.to_str())
+                                                == Some("gguf")
+                                            {
+                                                "Llama".to_string()
+                                            } else {
+                                                "Ollama".to_string()
+                                            };
+
                                         let discovered = DiscoveredModel {
                                             name: display_name,
                                             path: blob_path,
                                             lora_path: None,
                                             size_bytes: layer.size as u64,
-                                            model_type: "Ollama".to_string(),
+                                            model_type,
                                             parameter_count: None,
                                             quantization: None,
                                         };
@@ -723,7 +733,13 @@ impl ModelAutoDiscovery {
                     if let Ok(mut model) = self.analyze_model_file(&path) {
                         // Prefix with ollama: to distinguish from other sources
                         model.name = format!("ollama:{}", model.name);
-                        model.model_type = "Ollama".to_string();
+                        // PPT Invariant: GGUF files must use Llama backend, preserve existing type
+                        if path
+                            .extension()
+                            .is_none_or(|ext| ext.to_string_lossy().to_lowercase() != "gguf")
+                        {
+                            model.model_type = "Ollama".to_string();
+                        }
                         models.push(model);
                     }
                 }
@@ -770,7 +786,13 @@ impl ModelAutoDiscovery {
                             .unwrap_or("unknown");
 
                         model.name = format!("ollama:{}", parent_name);
-                        model.model_type = "Ollama".to_string();
+                        // PPT Invariant: GGUF files must use Llama backend, preserve existing type
+                        if path
+                            .extension()
+                            .is_none_or(|ext| ext.to_string_lossy().to_lowercase() != "gguf")
+                        {
+                            model.model_type = "Ollama".to_string();
+                        }
                         models.push(model);
                     }
                 }

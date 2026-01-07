@@ -1,0 +1,171 @@
+name: Vision Cross-Platform Testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_platforms:
+        description: 'Platforms to test (comma-separated: linux-x86_64,linux-arm64,windows-x86_64,macos-intel,macos-arm64)'
+        required: false
+        default: 'linux-x86_64,linux-arm64,windows-x86_64'
+      skip_macos:
+        description: 'Skip macOS testing (requires external validation)'
+        type: boolean
+        default: true
+
+jobs:
+  test-vision-linux-cuda:
+    if: contains(github.event.inputs.test_platforms, 'linux-x86_64') || github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and test Linux CUDA
+        run: |
+          docker build -f packaging/docker/Dockerfile.vision-test-linux-cuda -t vision-test-linux-cuda .
+          docker run --gpus all -v $(pwd):/workspace vision-test-linux-cuda
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: vision-test-results-linux-cuda
+          path: test-results-linux-cuda.json
+
+  test-vision-linux-arm64:
+    if: contains(github.event.inputs.test_platforms, 'linux-arm64') || github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build and test Linux ARM64
+        run: |
+          docker build -f packaging/docker/Dockerfile.vision-test-linux-arm64 -t vision-test-linux-arm64 .
+          docker run -v $(pwd):/workspace vision-test-linux-arm64
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: vision-test-results-linux-arm64
+          path: test-results-linux-arm64.json
+
+  test-vision-windows:
+    if: contains(github.event.inputs.test_platforms, 'windows-x86_64') || github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and test Windows (Wine)
+        run: |
+          docker build -f packaging/docker/Dockerfile.vision-test-windows -t vision-test-windows .
+          docker run -v $(pwd):/workspace vision-test-windows
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: vision-test-results-windows
+          path: test-results-windows.json
+
+  test-vision-macos-cross:
+    if: contains(github.event.inputs.test_platforms, 'macos') && !github.event.inputs.skip_macos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and validate macOS cross-compilation
+        run: |
+          docker build -f packaging/docker/Dockerfile.vision-test-macos-cross -t vision-test-macos-cross .
+          docker run -v $(pwd):/workspace vision-test-macos-cross
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: vision-test-results-macos-cross
+          path: test-results-macos-cross.json
+
+  validate-test-results:
+    needs: [test-vision-linux-cuda, test-vision-linux-arm64, test-vision-windows]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all test results
+        uses: actions/download-artifact@v4
+        with:
+          path: test-results
+
+      - name: Validate test results
+        run: |
+          echo "🔍 Validating cross-platform vision test results..."
+
+          # Check that all expected result files exist
+          expected_files=(
+            "test-results/vision-test-results-linux-cuda/test-results-linux-cuda.json"
+            "test-results/vision-test-results-linux-arm64/test-results-linux-arm64.json"
+            "test-results/vision-test-results-windows/test-results-windows.json"
+          )
+
+          all_passed=true
+          for file in "${expected_files[@]}"; do
+            if [ -f "$file" ]; then
+              echo "✅ Found test results: $file"
+
+              # Basic validation - check JSON is valid and contains success field
+              if jq -e '.success' "$file" > /dev/null 2>&1; then
+                success=$(jq -r '.success' "$file")
+                if [ "$success" = "true" ]; then
+                  echo "✅ Test passed for $(basename "$file")"
+                else
+                  echo "❌ Test failed for $(basename "$file")"
+                  all_passed=false
+                fi
+              else
+                echo "❌ Invalid test result format in $file"
+                all_passed=false
+              fi
+            else
+              echo "❌ Missing test results: $file"
+              all_passed=false
+            fi
+          done
+
+          if [ "$all_passed" = true ]; then
+            echo "🎉 All cross-platform vision tests PASSED"
+            echo "✅ Ready for Product Hunt launch"
+          else
+            echo "💥 Cross-platform vision tests FAILED"
+            echo "❌ Do not launch until all platforms pass"
+            exit 1
+          fi
+
+      - name: Generate test summary
+        run: |
+          echo "# Vision Cross-Platform Test Summary" > test-summary.md
+          echo "" >> test-summary.md
+          echo "Generated: $(date)" >> test-summary.md
+          echo "" >> test-summary.md
+
+          for result_file in test-results/*/test-results-*.json; do
+            if [ -f "$result_file" ]; then
+              platform=$(basename "$result_file" .json | sed 's/test-results-//')
+              success=$(jq -r '.success' "$result_file")
+              duration=$(jq -r '.total_duration_seconds' "$result_file")
+
+              echo "## $platform" >> test-summary.md
+              echo "- **Status**: $success" >> test-summary.md
+              echo "- **Duration**: ${duration}s" >> test-summary.md
+              echo "- **CPU Only**: $(jq -r '.cpu_only' "$result_file")" >> test-summary.md
+              echo "" >> test-summary.md
+            fi
+          done
+
+      - name: Upload test summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: vision-test-summary
+          path: test-summary.md
