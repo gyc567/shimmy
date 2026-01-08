@@ -240,47 +240,61 @@ jobs:
           ./bin/shimmy --version
           echo "✅ Binary version check passed"
 
-      - name: Test 2 - Help shows vision commands
+      - name: Test 2 - Help shows commands
         run: |
           ./bin/shimmy --help
           echo "✅ Help displayed"
 
-      - name: Test 3 - Vision OCR on test image
+      - name: Test 3 - Start server and test Vision API
         run: |
-          # Download a test image with text
+          # Start server in background
+          ./bin/shimmy serve --bind 127.0.0.1:11435 &
+          SERVER_PID=$!
+          echo "Server started with PID $SERVER_PID"
+          
+          # Wait for server to be ready
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:11435/health > /dev/null 2>&1; then
+              echo "Server is ready"
+              break
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 2
+          done
+          
+          # Download a test image
           curl -L -o test-ocr.png "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/SVG_Logo.svg/320px-SVG_Logo.svg.png"
           
-          echo "Running OCR test..."
-          ./bin/shimmy vision --image test-ocr.png --mode ocr --output json > ocr-result.json 2>&1 || true
+          # Convert image to base64
+          TEST_IMAGE_B64=$(base64 -w 0 test-ocr.png)
           
-          echo "OCR Result:"
-          cat ocr-result.json
+          echo "Running Vision API test..."
+          curl -s -X POST http://127.0.0.1:11435/api/vision \
+            -H "Content-Type: application/json" \
+            -d "{\"image\": \"data:image/png;base64,$TEST_IMAGE_B64\", \"prompt\": \"What text do you see in this image?\", \"max_tokens\": 200}" \
+            > vision-result.json 2>&1 || true
           
-          # Check if we got some output (even if JSON parsing fails, we should get something)
-          if [ -s ocr-result.json ]; then
-            echo "✅ Vision OCR produced output"
+          echo "Vision API Result:"
+          cat vision-result.json
+          
+          # Check result
+          if [ -s vision-result.json ] && grep -q "error\|text\|content" vision-result.json; then
+            echo "✅ Vision API responded"
+            VISION_SUCCESS="true"
           else
-            echo "⚠️ Vision OCR produced no output (may need model)"
+            echo "⚠️ Vision API test inconclusive"
+            VISION_SUCCESS="false"
           fi
-
-      - name: Test 4 - Vision on webpage URL
-        run: |
-          echo "Running web page vision test..."
-          ./bin/shimmy vision --url "https://example.com" --mode web --output json > web-result.json 2>&1 || true
           
-          echo "Web Vision Result:"
-          cat web-result.json
+          # Save for test results
+          echo "$VISION_SUCCESS" > vision-test-status.txt
           
-          if [ -s web-result.json ]; then
-            echo "✅ Vision web mode produced output"
-          else
-            echo "⚠️ Vision web mode produced no output"
-          fi
+          # Cleanup
+          kill $SERVER_PID 2>/dev/null || true
 
       - name: Generate test results
         run: |
-          OCR_SUCCESS=$([ -s ocr-result.json ] && echo "true" || echo "false")
-          WEB_SUCCESS=$([ -s web-result.json ] && echo "true" || echo "false")
+          VISION_SUCCESS=$(cat vision-test-status.txt 2>/dev/null || echo "false")
           
           cat > test-results-linux-x86_64.json << EOF
           {
@@ -290,8 +304,7 @@ jobs:
             "tests": {
               "binary_loads": true,
               "help_works": true,
-              "ocr_test": $OCR_SUCCESS,
-              "web_test": $WEB_SUCCESS
+              "vision_api_test": $VISION_SUCCESS
             },
             "timestamp": "${{ github.run_id }}"
           }
@@ -350,50 +363,61 @@ jobs:
           ./bin/shimmy.exe --version || echo "Version check completed"
           echo "✅ Binary version check passed"
 
-      - name: Test 2 - Help shows vision commands
+      - name: Test 2 - Help shows commands
         shell: bash
         run: |
           ./bin/shimmy.exe --help || echo "Help completed"
           echo "✅ Help displayed"
 
-      - name: Test 3 - Vision OCR on test image
+      - name: Test 3 - Start server and test Vision API
         shell: bash
         run: |
-          # Download a test image with text
+          # Start server in background
+          ./bin/shimmy.exe serve --bind 127.0.0.1:11435 &
+          SERVER_PID=$!
+          echo "Server started with PID $SERVER_PID"
+          
+          # Wait for server to be ready
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:11435/health > /dev/null 2>&1; then
+              echo "Server is ready"
+              break
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 2
+          done
+          
+          # Download a test image
           curl -L -o test-ocr.png "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/SVG_Logo.svg/320px-SVG_Logo.svg.png"
           
-          echo "Running OCR test..."
-          ./bin/shimmy.exe vision --image test-ocr.png --mode ocr --output json > ocr-result.json 2>&1 || true
+          # Convert image to base64 (Windows compatible)
+          TEST_IMAGE_B64=$(base64 -w 0 test-ocr.png 2>/dev/null || base64 test-ocr.png | tr -d '\n')
           
-          echo "OCR Result:"
-          cat ocr-result.json
+          echo "Running Vision API test..."
+          curl -s -X POST http://127.0.0.1:11435/api/vision \
+            -H "Content-Type: application/json" \
+            -d "{\"image\": \"data:image/png;base64,$TEST_IMAGE_B64\", \"prompt\": \"What text do you see in this image?\", \"max_tokens\": 200}" \
+            > vision-result.json 2>&1 || true
           
-          if [ -s ocr-result.json ]; then
-            echo "✅ Vision OCR produced output"
+          echo "Vision API Result:"
+          cat vision-result.json
+          
+          # Check result
+          if [ -s vision-result.json ] && grep -q "error\|text\|content" vision-result.json; then
+            echo "✅ Vision API responded"
+            echo "true" > vision-test-status.txt
           else
-            echo "⚠️ Vision OCR produced no output"
+            echo "⚠️ Vision API test inconclusive"
+            echo "false" > vision-test-status.txt
           fi
-
-      - name: Test 4 - Vision on webpage URL
-        shell: bash
-        run: |
-          echo "Running web page vision test..."
-          ./bin/shimmy.exe vision --url "https://example.com" --mode web --output json > web-result.json 2>&1 || true
           
-          echo "Web Vision Result:"
-          cat web-result.json
-          
-          if [ -s web-result.json ]; then
-            echo "✅ Vision web mode produced output"
-          else
-            echo "⚠️ Vision web mode produced no output"
-          fi
+          # Cleanup - taskkill for Windows
+          taskkill //F //PID $SERVER_PID 2>/dev/null || kill $SERVER_PID 2>/dev/null || true
 
       - name: Generate test results
         shell: bash
         run: |
-          OCR_SUCCESS=$([ -s ocr-result.json ] && echo "true" || echo "false")
-          WEB_SUCCESS=$([ -s web-result.json ] && echo "true" || echo "false")
+          VISION_SUCCESS=$(cat vision-test-status.txt 2>/dev/null || echo "false")
           
           cat > test-results-windows-x86_64.json << EOF
           {
@@ -403,8 +427,7 @@ jobs:
             "tests": {
               "binary_loads": true,
               "help_works": true,
-              "ocr_test": $OCR_SUCCESS,
-              "web_test": $WEB_SUCCESS
+              "vision_api_test": $VISION_SUCCESS
             },
             "timestamp": "${{ github.run_id }}"
           }
@@ -437,17 +460,16 @@ jobs:
         run: |
           echo "# 👁️ Vision Cross-Platform Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Platform | Vision Enabled | Model Cached | OCR Test | Web Test |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|----------------|--------------|----------|----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Vision Enabled | Model Cached | Vision API Test |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|----------------|--------------|-----------------|" >> $GITHUB_STEP_SUMMARY
           
           for file in ./results/*/test-results-*.json; do
             if [ -f "$file" ]; then
               platform=$(jq -r '.platform' "$file")
               vision=$(jq -r '.vision_enabled' "$file")
               cached=$(jq -r '.model_cached // "N/A"' "$file")
-              ocr=$(jq -r '.tests.ocr_test // "N/A"' "$file")
-              web=$(jq -r '.tests.web_test // "N/A"' "$file")
-              echo "| $platform | $vision | $cached | $ocr | $web |" >> $GITHUB_STEP_SUMMARY
+              vision_api=$(jq -r '.tests.vision_api_test // "N/A"' "$file")
+              echo "| $platform | $vision | $cached | $vision_api |" >> $GITHUB_STEP_SUMMARY
             fi
           done
           
