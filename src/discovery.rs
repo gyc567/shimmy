@@ -183,7 +183,7 @@ impl ModelDiscovery {
                     );
                     shard_groups
                         .entry(group_key)
-                        .or_default()
+                        .or_insert_with(Vec::new)
                         .push(file_path.clone());
                     processed_files.insert(file_path.clone());
                 } else {

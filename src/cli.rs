@@ -87,40 +87,6 @@ pub enum Command {
         #[arg(short, long)]
         name: Option<String>,
     },
-    #[cfg(feature = "vision")]
-    /// Analyze image or web page with AI vision (requires MiniCPM-V model)
-    Vision {
-        /// Path to image file
-        #[arg(long)]
-        image: Option<String>,
-        /// URL for web page analysis
-        #[arg(long)]
-        url: Option<String>,
-        /// Analysis mode: full, ocr, layout, brief, web
-        #[arg(long, default_value = "full")]
-        mode: String,
-        /// Output format: json, pretty
-        #[arg(long, default_value = "json")]
-        output: String,
-        /// Timeout in milliseconds
-        #[arg(long, default_value_t = 180000)]
-        timeout: u64,
-        /// License key
-        #[arg(long)]
-        license: Option<String>,
-        /// Include raw model output on parse failure
-        #[arg(long)]
-        raw: bool,
-        /// Capture screenshot of URL before analysis
-        #[arg(long)]
-        screenshot: bool,
-        /// Viewport width for screenshot
-        #[arg(long, default_value_t = 1280)]
-        viewport_width: u32,
-        /// Viewport height for screenshot
-        #[arg(long, default_value_t = 720)]
-        viewport_height: u32,
-    },
 }
 
 #[cfg(test)]

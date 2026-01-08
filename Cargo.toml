@@ -1,6 +1,6 @@
 [package]
 name = "shimmy"
-version = "1.8.3"
+version = "1.8.1"
 edition = "2021"
 license = "MIT"
 description = "Lightweight sub-5MB Ollama alternative with native SafeTensors support. No Python dependencies, 2x faster loading. Now with GitHub Spec-Kit integration for systematic development."
@@ -40,7 +40,7 @@ vision = ["dep:shimmy-vision", "dep:image", "dep:base64", "dep:chromiumoxide", "
 
 [dependencies]
 anyhow = "1"
-axum = { version = "0.7", features = ["http1","json","ws","macros"] }
+axum = { version = "0.7", features = ["http1", "json", "ws", "macros"] }
 async-trait = "0.1"
 base64 = { version = "0.21", optional = true }
 bytes = "1"
@@ -48,7 +48,6 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
 chromiumoxide = { version = "0.7", optional = true, default-features = false, features = ["tokio-runtime"] }
-dirs = "5.0"
 ed25519-dalek = { version = "2", optional = true, features = ["std"] }
 hex = { version = "0.4", optional = true }
 image = { version = "0.24", optional = true }
@@ -59,7 +58,6 @@ minijinja = { version = "2", features = ["loader"] }
 parking_lot = "0.12"
 rand = "0.8"
 regex = "1"
-reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
 safetensors = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -72,6 +70,8 @@ tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+dirs = "5.0"
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
 
 # llama.cpp bindings (optional) - published shimmy-llama-cpp-2 with MoE CPU offloading support
 shimmy-llama-cpp-2 = { version = "0.1.123", optional = true, default-features = false }
@@ -83,7 +83,6 @@ shimmy-vision = { git = "https://github.com/Michael-A-Kuykendall/shimmy-vision-p
 tokio-tungstenite = "0.20"
 criterion = { version = "0.5", features = ["html_reports"] }
 serial_test = "3.1"  # For serialized test execution
-tower = { version = "0.4", features = ["util"] }  # For ServiceExt::oneshot in API tests
 # Additional dependencies for mock testing infrastructure
 tempfile = "3"  # For creating temporary test directories
 rand = "0.8"    # For randomized testing scenarios (already in main deps)
@@ -114,7 +113,6 @@ harness = false
 [[bench]]
 name = "generation_performance"
 harness = false
-
 
 [workspace]
 

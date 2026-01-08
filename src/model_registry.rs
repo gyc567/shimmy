@@ -109,19 +109,12 @@ impl Registry {
 
         // Fall back to discovered models
         if let Some(discovered) = self.discovered_models.get(name) {
-            let ctx_len = if name.to_lowercase().contains("minicpm")
-                || name.to_lowercase().contains("vision")
-            {
-                32768
-            } else {
-                4096
-            };
             return Some(ModelSpec {
                 name: discovered.name.clone(),
                 base_path: discovered.path.clone(),
                 lora_path: discovered.lora_path.clone(),
                 template: Some(self.infer_template(&discovered.name)),
-                ctx_len,
+                ctx_len: 4096,
                 n_threads: None,
             });
         }
