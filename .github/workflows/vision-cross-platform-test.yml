@@ -25,7 +25,7 @@ jobs:
       - name: Build and test Linux CUDA
         run: |
           docker build -f packaging/docker/Dockerfile.vision-test-linux-cuda -t vision-test-linux-cuda .
-          docker run --gpus all -v $(pwd):/workspace vision-test-linux-cuda
+          docker run -v $(pwd):/workspace vision-test-linux-cuda
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
