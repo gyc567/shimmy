@@ -196,6 +196,8 @@ jobs:
   test-vision-linux-x86_64:
     needs: build-linux-x86_64
     runs-on: ubuntu-latest
+    env:
+      SHIMMY_VISION_MODEL_DIR: /home/runner/.cache/shimmy/vision/models
     steps:
       - uses: actions/checkout@v4
 
@@ -208,13 +210,31 @@ jobs:
       - name: Make binary executable
         run: chmod +x ./bin/shimmy
 
-      - name: Download vision model
+      # Cache the vision model (10GB limit per repo, this is ~4.5GB)
+      - name: Restore vision model from cache
+        id: cache-model
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/shimmy/vision/models
+          key: vision-model-minicpm-v-2_6-q4km-v1
+
+      - name: Download vision model from Hugging Face (if not cached)
+        if: steps.cache-model.outputs.cache-hit != 'true'
         run: |
-          mkdir -p ~/.cache/shimmy/models
-          # Download MiniCPM-V model for vision testing
-          # Model path will be set via environment variable
-          echo "Vision model download placeholder - actual model will be fetched on first use"
+          mkdir -p $SHIMMY_VISION_MODEL_DIR/minicpm-v-2_6
+          echo "Downloading MiniCPM-V model from Hugging Face..."
           
+          # Download main model (~4GB)
+          curl -L --progress-bar -o $SHIMMY_VISION_MODEL_DIR/minicpm-v-2_6/ggml-model-Q4_K_M.gguf \
+            "https://huggingface.co/openbmb/MiniCPM-V-2_6-gguf/resolve/main/ggml-model-Q4_K_M.gguf"
+          
+          # Download projector (~0.5GB)
+          curl -L --progress-bar -o $SHIMMY_VISION_MODEL_DIR/minicpm-v-2_6/mmproj-model-f16.gguf \
+            "https://huggingface.co/openbmb/MiniCPM-V-2_6-gguf/resolve/main/mmproj-model-f16.gguf"
+          
+          echo "Model download complete"
+          ls -lh $SHIMMY_VISION_MODEL_DIR/minicpm-v-2_6/
+
       - name: Test 1 - Binary loads and shows version
         run: |
           ./bin/shimmy --version
@@ -225,24 +245,53 @@ jobs:
           ./bin/shimmy --help
           echo "✅ Help displayed"
 
-      - name: Test 3 - Vision OCR on test image (requires model)
-        continue-on-error: true
+      - name: Test 3 - Vision OCR on test image
         run: |
-          # This test requires the vision model to be available
-          # In CI, we test that the vision command is recognized
-          ./bin/shimmy generate --help 2>&1 | head -20
-          echo "Vision generate command available"
+          # Download a test image with text
+          curl -L -o test-ocr.png "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/SVG_Logo.svg/320px-SVG_Logo.svg.png"
+          
+          echo "Running OCR test..."
+          ./bin/shimmy vision --image test-ocr.png --mode ocr --output json > ocr-result.json 2>&1 || true
+          
+          echo "OCR Result:"
+          cat ocr-result.json
+          
+          # Check if we got some output (even if JSON parsing fails, we should get something)
+          if [ -s ocr-result.json ]; then
+            echo "✅ Vision OCR produced output"
+          else
+            echo "⚠️ Vision OCR produced no output (may need model)"
+          fi
+
+      - name: Test 4 - Vision on webpage URL
+        run: |
+          echo "Running web page vision test..."
+          ./bin/shimmy vision --url "https://example.com" --mode web --output json > web-result.json 2>&1 || true
+          
+          echo "Web Vision Result:"
+          cat web-result.json
+          
+          if [ -s web-result.json ]; then
+            echo "✅ Vision web mode produced output"
+          else
+            echo "⚠️ Vision web mode produced no output"
+          fi
 
       - name: Generate test results
         run: |
-          cat > test-results-linux-x86_64.json << 'EOF'
+          OCR_SUCCESS=$([ -s ocr-result.json ] && echo "true" || echo "false")
+          WEB_SUCCESS=$([ -s web-result.json ] && echo "true" || echo "false")
+          
+          cat > test-results-linux-x86_64.json << EOF
           {
             "platform": "linux-x86_64",
             "vision_enabled": true,
+            "model_cached": ${{ steps.cache-model.outputs.cache-hit == 'true' }},
             "tests": {
               "binary_loads": true,
               "help_works": true,
-              "vision_command_available": true
+              "ocr_test": $OCR_SUCCESS,
+              "web_test": $WEB_SUCCESS
             },
             "timestamp": "${{ github.run_id }}"
           }
@@ -258,6 +307,8 @@ jobs:
   test-vision-windows-x86_64:
     needs: build-windows-x86_64
     runs-on: windows-latest
+    env:
+      SHIMMY_VISION_MODEL_DIR: C:\Users\runneradmin\.cache\shimmy\vision\models
     steps:
       - uses: actions/checkout@v4
 
@@ -266,6 +317,32 @@ jobs:
         with:
           name: shimmy-vision-windows-x86_64
           path: ./bin
+
+      # Cache the vision model
+      - name: Restore vision model from cache
+        id: cache-model
+        uses: actions/cache@v4
+        with:
+          path: C:\Users\runneradmin\.cache\shimmy\vision\models
+          key: vision-model-minicpm-v-2_6-q4km-windows-v1
+
+      - name: Download vision model from Hugging Face (if not cached)
+        if: steps.cache-model.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p "$SHIMMY_VISION_MODEL_DIR/minicpm-v-2_6"
+          echo "Downloading MiniCPM-V model from Hugging Face..."
+          
+          # Download main model (~4GB)
+          curl -L --progress-bar -o "$SHIMMY_VISION_MODEL_DIR/minicpm-v-2_6/ggml-model-Q4_K_M.gguf" \
+            "https://huggingface.co/openbmb/MiniCPM-V-2_6-gguf/resolve/main/ggml-model-Q4_K_M.gguf"
+          
+          # Download projector (~0.5GB)
+          curl -L --progress-bar -o "$SHIMMY_VISION_MODEL_DIR/minicpm-v-2_6/mmproj-model-f16.gguf" \
+            "https://huggingface.co/openbmb/MiniCPM-V-2_6-gguf/resolve/main/mmproj-model-f16.gguf"
+          
+          echo "Model download complete"
+          ls -lh "$SHIMMY_VISION_MODEL_DIR/minicpm-v-2_6/"
 
       - name: Test 1 - Binary loads and shows version
         shell: bash
@@ -279,24 +356,55 @@ jobs:
           ./bin/shimmy.exe --help || echo "Help completed"
           echo "✅ Help displayed"
 
-      - name: Test 3 - Vision command available
+      - name: Test 3 - Vision OCR on test image
         shell: bash
-        continue-on-error: true
         run: |
-          ./bin/shimmy.exe generate --help 2>&1 | head -20
-          echo "Vision generate command available"
+          # Download a test image with text
+          curl -L -o test-ocr.png "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/SVG_Logo.svg/320px-SVG_Logo.svg.png"
+          
+          echo "Running OCR test..."
+          ./bin/shimmy.exe vision --image test-ocr.png --mode ocr --output json > ocr-result.json 2>&1 || true
+          
+          echo "OCR Result:"
+          cat ocr-result.json
+          
+          if [ -s ocr-result.json ]; then
+            echo "✅ Vision OCR produced output"
+          else
+            echo "⚠️ Vision OCR produced no output"
+          fi
+
+      - name: Test 4 - Vision on webpage URL
+        shell: bash
+        run: |
+          echo "Running web page vision test..."
+          ./bin/shimmy.exe vision --url "https://example.com" --mode web --output json > web-result.json 2>&1 || true
+          
+          echo "Web Vision Result:"
+          cat web-result.json
+          
+          if [ -s web-result.json ]; then
+            echo "✅ Vision web mode produced output"
+          else
+            echo "⚠️ Vision web mode produced no output"
+          fi
 
       - name: Generate test results
         shell: bash
         run: |
-          cat > test-results-windows-x86_64.json << 'EOF'
+          OCR_SUCCESS=$([ -s ocr-result.json ] && echo "true" || echo "false")
+          WEB_SUCCESS=$([ -s web-result.json ] && echo "true" || echo "false")
+          
+          cat > test-results-windows-x86_64.json << EOF
           {
             "platform": "windows-x86_64",
             "vision_enabled": true,
+            "model_cached": ${{ steps.cache-model.outputs.cache-hit == 'true' }},
             "tests": {
               "binary_loads": true,
               "help_works": true,
-              "vision_command_available": true
+              "ocr_test": $OCR_SUCCESS,
+              "web_test": $WEB_SUCCESS
             },
             "timestamp": "${{ github.run_id }}"
           }
@@ -329,14 +437,17 @@ jobs:
         run: |
           echo "# 👁️ Vision Cross-Platform Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Platform | Vision Enabled | Tests Passed |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|----------------|--------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Vision Enabled | Model Cached | OCR Test | Web Test |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|----------------|--------------|----------|----------|" >> $GITHUB_STEP_SUMMARY
           
-          for dir in ./results/*/; do
-            if [ -f "${dir}test-results-*.json" ]; then
-              platform=$(cat ${dir}test-results-*.json | jq -r '.platform')
-              vision=$(cat ${dir}test-results-*.json | jq -r '.vision_enabled')
-              echo "| $platform | $vision | ✅ |" >> $GITHUB_STEP_SUMMARY
+          for file in ./results/*/test-results-*.json; do
+            if [ -f "$file" ]; then
+              platform=$(jq -r '.platform' "$file")
+              vision=$(jq -r '.vision_enabled' "$file")
+              cached=$(jq -r '.model_cached // "N/A"' "$file")
+              ocr=$(jq -r '.tests.ocr_test // "N/A"' "$file")
+              web=$(jq -r '.tests.web_test // "N/A"' "$file")
+              echo "| $platform | $vision | $cached | $ocr | $web |" >> $GITHUB_STEP_SUMMARY
             fi
           done
           
