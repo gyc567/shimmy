@@ -13,6 +13,8 @@ jobs:
   preflight:
     name: "🚧 Release Gates - MANDATORY VALIDATION"
     runs-on: ubuntu-latest
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
     outputs:
       should_publish: ${{ steps.gates.outputs.should_publish }}
     steps:
@@ -240,6 +242,8 @@ jobs:
             artifact-name: shimmy-macos-arm64
 
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
     steps:
       - uses: actions/checkout@v4
 
