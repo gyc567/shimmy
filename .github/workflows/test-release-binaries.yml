@@ -63,7 +63,7 @@ jobs:
           base64_image=$(base64 -w 0 test-image.jpg)
           response=$(curl -s -X POST http://127.0.0.1:11435/api/vision \
             -H "Content-Type: application/json" \
-            -d "{\"prompt\":\"What is in this image?\",\"image\":\"data:image/jpeg;base64,$base64_image\",\"max_tokens\":50}")
+            -d "{\"mode\":\"analyze\",\"image_base64\":\"$base64_image\",\"timeout_ms\":30000}")
           
           echo "Vision API response: $response"
           
@@ -150,7 +150,7 @@ jobs:
           base64_image=$(base64 -w 0 test-image.jpg)
           response=$(curl -s -X POST http://127.0.0.1:11435/api/vision \
             -H "Content-Type: application/json" \
-            -d "{\"prompt\":\"What is in this image?\",\"image\":\"data:image/jpeg;base64,$base64_image\",\"max_tokens\":50}")
+            -d "{\"mode\":\"analyze\",\"image_base64\":\"$base64_image\",\"timeout_ms\":30000}")
           
           echo "Vision API response: $response"
           
@@ -209,7 +209,7 @@ jobs:
           base64_image=$(base64 test-image.jpg | tr -d '\n')
           response=$(curl -s -X POST http://127.0.0.1:11435/api/vision \
             -H "Content-Type: application/json" \
-            -d "{\"prompt\":\"What is in this image?\",\"image\":\"data:image/jpeg;base64,$base64_image\",\"max_tokens\":50}")
+            -d "{\"mode\":\"analyze\",\"image_base64\":\"$base64_image\",\"timeout_ms\":30000}")
           
           echo "Vision API response: $response"
           
@@ -267,7 +267,7 @@ jobs:
           base64_image=$(base64 test-image.jpg | tr -d '\n')
           response=$(curl -s -X POST http://127.0.0.1:11435/api/vision \
             -H "Content-Type: application/json" \
-            -d "{\"prompt\":\"What is in this image?\",\"image\":\"data:image/jpeg;base64,$base64_image\",\"max_tokens\":50}")
+            -d "{\"mode\":\"analyze\",\"image_base64\":\"$base64_image\",\"timeout_ms\":30000}")
           
           echo "Vision API response: $response"
           
