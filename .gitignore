@@ -35,9 +35,20 @@ Thumbs.db
 
 # Internal development documents (NEVER commit)
 docs-internal/
+docs/internal/
+.github/internal/
 
 # Internal workspace docs (NEVER commit)
 .internal/
+
+# Temporary and local-only files
+temp_*.txt
+temp_*.md
+*_temp.md
+*_temp.txt
+*-LOCAL.md
+*-PRIVATE.md
+*.local.md
 
 # Copilot instructions (internal only)
 .github/copilot-instructions.md
