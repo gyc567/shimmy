@@ -1194,14 +1194,7 @@ pub async fn vision(
         axum::http::StatusCode::INTERNAL_SERVER_ERROR
     }
 
-    match crate::vision::process_vision_request(
-        req,
-        &model_name,
-        license_manager,
-        &state,
-    )
-    .await
-    {
+    match crate::vision::process_vision_request(req, &model_name, license_manager, &state).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => {
             // Check if it's a license error
@@ -1220,11 +1213,12 @@ pub async fn vision(
             tracing::error!(status = %status, "Vision processing error: {}", full_message);
             // Expose client error messages (4xx) to help users fix their requests.
             // Hide server error details (5xx) unless running in dev mode.
-            let message = if status.is_client_error() || std::env::var("SHIMMY_VISION_DEV_MODE").is_ok() {
-                full_message
-            } else {
-                "Vision processing error".to_string()
-            };
+            let message =
+                if status.is_client_error() || std::env::var("SHIMMY_VISION_DEV_MODE").is_ok() {
+                    full_message
+                } else {
+                    "Vision processing error".to_string()
+                };
 
             (
                 status,
