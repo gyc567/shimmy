@@ -17,10 +17,11 @@ jobs:
           gh release download ${{ github.event.inputs.release_tag }} \
             --repo ${{ github.repository }} \
             --pattern 'shimmy-linux-x86_64' \
-            --output shimmy
+            --output shimmy \
+            --skip-existing
           chmod +x shimmy
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Test binary version
         run: |
@@ -51,11 +52,11 @@ jobs:
             --output shimmy
           chmod +x shimmy
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Test binary in ARM64 container
         run: |
-          docker run --rm -v $(pwd)/shimmy:/shimmy arm64v8/ubuntu:22.04 /shimmy --version
+          docker run --rm --platform linux/arm64 -v $(pwd)/shimmy:/shimmy:ro arm64v8/ubuntu:22.04 /bin/bash -c "chmod +x /shimmy && /shimmy --version"
           echo "✅ ARM64 binary works"
 
   test-windows-x86_64:
@@ -68,7 +69,7 @@ jobs:
             --repo ${{ github.repository }} \
             --pattern 'shimmy-windows-x86_64.exe'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Test binary version
         shell: cmd
@@ -83,7 +84,7 @@ jobs:
           echo ✅ Help command works
 
   test-macos-intel:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - name: Download binary from release
         run: |
@@ -93,7 +94,7 @@ jobs:
             --output shimmy
           chmod +x shimmy
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Test binary version
         run: |
@@ -116,7 +117,7 @@ jobs:
             --output shimmy
           chmod +x shimmy
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Test binary version
         run: |
