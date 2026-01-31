@@ -30,6 +30,14 @@
 
 ---
 
+## 🌏 中文教程
+
+**欢迎阅读中文版本！** → [Shimmy中文教程.md](Shimmy中文教程.md)
+
+包含：产品介绍、安装配置、快速开始、API 文档、GPU 加速、常见问题等完整内容。
+
+---
+
 ## Drop-in OpenAI API Replacement for Local LLMs
 
 Shimmy is a **single-binary** that provides **100% OpenAI-compatible endpoints** for GGUF models. Point your existing AI tools to Shimmy and they just work — locally, privately, and free.
